@@ -697,8 +697,8 @@ body {
   color: var(--dim); align-items: center;
 }
 .sys-pair { display: flex; gap: 5px; align-items: center; }
-.sys-pair .sys-key { color: var(--mute); font-weight: 500; }
-.sys-pair .sys-val { color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+.sys-pair .sys-key { color: var(--mute); font-weight: 500; font-size: 11px; }
+.sys-pair .sys-val { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .sys-dot-live { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: blink 2s ease-in-out infinite; }
 .sys-sep { width: 1px; height: 14px; background: var(--border); flex-shrink: 0; }
 
@@ -993,11 +993,6 @@ body {
   font-size: 11px; color: var(--mute);
 }
 .footer-left { display: flex; align-items: center; gap: 16px; }
-.footer-online { display: flex; align-items: center; gap: 6px; }
-.footer-online .dot {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--green);
-  animation: blink 2s ease-in-out infinite;
-}
 .footer-right { display: flex; align-items: center; gap: 16px; }
 .footer-motto { font-family: 'JetBrains Mono', monospace; font-size: 10px; }
 .footer-motto .way { color: var(--yellow); font-weight: 600; }

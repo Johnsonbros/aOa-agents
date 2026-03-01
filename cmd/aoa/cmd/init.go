@@ -11,6 +11,7 @@ import (
 	"github.com/corey/aoa/internal/adapters/bbolt"
 	"github.com/corey/aoa/internal/adapters/socket"
 	"github.com/corey/aoa/internal/app"
+	"github.com/corey/aoa/internal/domain/status"
 	"github.com/spf13/cobra"
 )
 
@@ -34,20 +35,30 @@ func runInit(cmd *cobra.Command, args []string) error {
 	paths := app.NewPaths(root)
 	dbPath := paths.DB
 	projectID := filepath.Base(root)
+	shimDir := filepath.Join(root, ".aoa", "shims")
 
 	// If daemon is running, delegate reindex via socket (avoids bbolt lock contention).
 	sockPath := socket.SocketPath(root)
 	client := socket.NewClient(sockPath)
 	if client.Ping() {
-		fmt.Println("⚡ Daemon running — delegating reindex...")
 		result, err := client.Reindex()
 		if err != nil {
 			return fmt.Errorf("reindex via daemon: %w", err)
 		}
-		fmt.Printf("⚡ aOa indexed %d files, %d symbols, %d tokens (%dms)\n",
-			result.FileCount, result.SymbolCount, result.TokenCount, result.ElapsedMs)
-		createShims(root)
-		configureStatusLine(root)
+		shimsOK := createShims(root)
+		statusOK := configureStatusLine(root)
+		seedStatusFile(paths)
+
+		// Read dashboard URL from running daemon.
+		dashURL := ""
+		if portData, err := os.ReadFile(paths.PortFile); err == nil {
+			dashURL = "http://localhost:" + strings.TrimSpace(string(portData))
+		}
+
+		printInitSummary(
+			result.FileCount, result.SymbolCount, result.TokenCount,
+			shimsOK, statusOK, true, dashURL, shimDir,
+		)
 		return nil
 	}
 
@@ -76,8 +87,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("⚡ Scanning project...")
-
 	idx, stats, err := app.BuildIndex(root, parser)
 	if err != nil {
 		store.Close()
@@ -91,30 +100,99 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	store.Close()
 
-	fmt.Printf("⚡ aOa indexed %d files, %d symbols, %d tokens\n",
-		stats.FileCount, stats.SymbolCount, stats.TokenCount)
-	createShims(root)
-	configureStatusLine(root)
+	shimsOK := createShims(root)
+	statusOK := configureStatusLine(root)
+	seedStatusFile(paths)
 
 	// Auto-start daemon so grep, dashboard, and tailing work immediately.
+	daemonOK := false
+	dashURL := ""
 	if !client.Ping() {
-		fmt.Println()
-		if err := spawnDaemon(root, sockPath); err != nil {
+		var err error
+		dashURL, err = spawnDaemon(root, sockPath)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not auto-start daemon: %v\n", err)
 			fmt.Fprintf(os.Stderr, "  → start manually: aoa daemon start\n")
+		} else {
+			daemonOK = true
 		}
 	}
+
+	printInitSummary(
+		stats.FileCount, stats.SymbolCount, stats.TokenCount,
+		shimsOK, statusOK, daemonOK, dashURL, shimDir,
+	)
 	return nil
+}
+
+// printInitSummary prints the cohesive checklist output for aoa init.
+func printInitSummary(files, symbols, tokens int, shimsOK, statusOK, daemonOK bool, dashURL, shimDir string) {
+	fmt.Println("⚡ aOa initialized")
+	fmt.Println()
+
+	// Checklist
+	fmt.Printf("  ✓ indexed %s files, %s symbols, %s tokens\n",
+		commaInt(files), commaInt(symbols), commaInt(tokens))
+	if shimsOK {
+		fmt.Println("  ✓ shims installed (grep, egrep)")
+	}
+	if statusOK {
+		fmt.Println("  ✓ status line configured")
+	}
+	if daemonOK {
+		if dashURL != "" {
+			fmt.Printf("  ✓ daemon started — %s\n", dashURL)
+		} else {
+			fmt.Println("  ✓ daemon started")
+		}
+	}
+
+	// Activation block
+	fmt.Println()
+	fmt.Println("  To activate, add to ~/.bashrc or ~/.zshrc:")
+	fmt.Println()
+	fmt.Printf("    alias claude='PATH=\"%s:$PATH\" claude'\n", shimDir)
+	fmt.Printf("    alias gemini='PATH=\"%s:$PATH\" gemini'\n", shimDir)
+	fmt.Println()
+	fmt.Println("  aOa intercepts grep and egrep with semantic search.")
+	fmt.Println("  Results point to methods and functions — not just matching lines.")
+	fmt.Println("  Claude navigates directly to what matters. No file scanning.")
+	fmt.Println("  Self-learning, O(1) indexed, sub-ms — pure math, zero AI overhead.")
+
+	// Branded sign-off (yellow)
+	fmt.Println()
+	fmt.Println("  \033[93maOa learns. You build faster.\033[0m")
+}
+
+// commaInt formats an integer with comma separators (e.g. 1563 -> "1,563").
+func commaInt(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	// Insert commas from the right.
+	var b strings.Builder
+	start := len(s) % 3
+	if start == 0 {
+		start = 3
+	}
+	b.WriteString(s[:start])
+	for i := start; i < len(s); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }
 
 // createShims writes grep and egrep shim scripts to {root}/.aoa/shims/.
 // Each shim execs the corresponding aoa subcommand, transparently replacing
 // system binaries when .aoa/shims is prepended to PATH.
-func createShims(root string) {
+// Returns true if shims exist (whether freshly written or already present).
+func createShims(root string) bool {
 	shimDir := filepath.Join(root, ".aoa", "shims")
 	if err := os.MkdirAll(shimDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not create shims directory: %v\n", err)
-		return
+		return false
 	}
 
 	shims := map[string]string{
@@ -122,7 +200,7 @@ func createShims(root string) {
 		"egrep": "#!/usr/bin/env bash\nexport AOA_SHIM=1\nexec aoa egrep \"$@\"\n",
 	}
 
-	wrote := false
+	ok := true
 	for name, content := range shims {
 		path := filepath.Join(shimDir, name)
 
@@ -134,24 +212,20 @@ func createShims(root string) {
 
 		if err := os.WriteFile(path, []byte(content), 0755); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not write shim %s: %v\n", name, err)
+			ok = false
 			continue
 		}
-		wrote = true
 	}
 
-	if wrote {
-		fmt.Printf("\n⚡ aOa shims created in .aoa/shims/\n\n")
-		fmt.Printf("  To activate for AI tools, add to ~/.bashrc or ~/.zshrc:\n\n")
-		fmt.Printf("    alias claude='PATH=\"%s:$PATH\" claude'\n", shimDir)
-		fmt.Printf("    alias gemini='PATH=\"%s:$PATH\" gemini'\n", shimDir)
-	}
+	return ok
 }
 
 // configureStatusLine deploys the embedded status line hook to .aoa/hooks/
 // and auto-configures it in .claude/settings.local.json. Non-destructive:
 // backs up settings before modifying, idempotent if already configured,
 // and preserves all existing settings keys.
-func configureStatusLine(root string) {
+// Returns true if the status line is configured (whether freshly or already).
+func configureStatusLine(root string) bool {
 	// Deploy the embedded hook script to .aoa/hooks/.
 	hookDir := filepath.Join(root, ".aoa", "hooks")
 	hookPath := filepath.Join(hookDir, "aoa-status-line.sh")
@@ -159,12 +233,12 @@ func configureStatusLine(root string) {
 	scriptData, err := hooks.FS.ReadFile("aoa-status-line.sh")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: embedded status line hook not found: %v\n", err)
-		return
+		return false
 	}
 
 	if err := os.MkdirAll(hookDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not create .aoa/hooks directory: %v\n", err)
-		return
+		return false
 	}
 
 	// Write hook script (update if content changed, skip if identical).
@@ -172,7 +246,7 @@ func configureStatusLine(root string) {
 	if readErr != nil || string(existing) != string(scriptData) {
 		if err := os.WriteFile(hookPath, scriptData, 0755); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not write hook script: %v\n", err)
-			return
+			return false
 		}
 	}
 
@@ -186,13 +260,13 @@ func configureStatusLine(root string) {
 	if err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not parse %s: %v\n", settingsPath, err)
-			return
+			return false
 		}
 	} else if os.IsNotExist(err) {
 		settings = make(map[string]interface{})
 	} else {
 		fmt.Fprintf(os.Stderr, "warning: could not read %s: %v\n", settingsPath, err)
-		return
+		return false
 	}
 
 	// Always ensure status-line.conf exists (independent of settings.local.json).
@@ -201,8 +275,7 @@ func configureStatusLine(root string) {
 	// Check if already configured.
 	if sl, ok := settings["statusLine"].(map[string]interface{}); ok {
 		if cmd, ok := sl["command"].(string); ok && strings.Contains(cmd, "aoa-status-line.sh") {
-			fmt.Println("✓ status line already configured")
-			return
+			return true
 		}
 	}
 
@@ -211,9 +284,8 @@ func configureStatusLine(root string) {
 		backupPath := settingsPath + ".bak"
 		if err := os.WriteFile(backupPath, data, 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not backup %s: %v\n", settingsPath, err)
-			return
+			return false
 		}
-		fmt.Println("backed up .claude/settings.local.json → .claude/settings.local.json.bak")
 	}
 
 	// Inject statusLine config pointing to the deployed hook.
@@ -225,68 +297,64 @@ func configureStatusLine(root string) {
 	// Ensure .claude/ directory exists.
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not create .claude directory: %v\n", err)
-		return
+		return false
 	}
 
 	// Write back with indentation.
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not marshal settings: %v\n", err)
-		return
+		return false
 	}
 	out = append(out, '\n')
 
 	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write %s: %v\n", settingsPath, err)
-		return
+		return false
 	}
-	fmt.Println("⚡ status line configured")
+	return true
 }
 
 // defaultStatusLineConf is the template for .aoa/status-line.conf.
 // Uncommented lines are the default segments shown on the status line.
 // Users can comment/uncomment and reorder to customize.
 const defaultStatusLineConf = `# aOa Status Line Configuration
-# Uncomment segments to show them. Order = display order (left to right).
-# Segments are separated by | on the status line.
 # Edit and save — changes take effect on the next status line refresh.
+#
+# Layout:  ⚡ aOa <traffic light> │ <segments...>
+#
+# The left section is always shown:
+#   ⚡ aOa    Clickable link to dashboard (when daemon is running)
+#   ⚪/🟡/🟢   Learning maturity (input count: ⚪ <30, 🟡 30-99, 🟢 100+)
+#
+# Uncomment segments to show them. Order = display order.
+# Segments are separated by │ on the status line.
 
-# === Left (aOa header + traffic light) ===
-intents
-
-# === Middle (pick what matters to you) ===
+# ─── active segments ─────────────────────────────────────────────
 tokens_saved
 time_saved_range
 #burn_rate
+#cost_saved
 #cost
 #lines_changed
-
-# === Right ===
 context
 model
-#dashboard
 
-# -----------------------------------------------------------------
-# All available segments (matches dashboard stat cards):
+# ─── all available segments ──────────────────────────────────────
 #
-#   Live
+#   Live (aOa session metrics)
 #     tokens_saved        Tokens saved from guided reads         ↓93k
 #     time_saved_range    Time saved estimate (low-high)         ⚡5m-52m saved
+#     cost_saved          Est. dollars saved from guided reads   $0.42 saved
 #     burn_rate           Context burn rate                      🔥1.5k/min
-#     cost                Session cost                           $23.05
 #     guided_ratio        Guided read percentage                 guided 70%
 #     shadow_saved        Shadow engine savings                  shadow ↓5k
 #     cache_hit_rate      Prompt cache hit rate                  cache 85%
+#     cache_saved         Cache read dollar savings              cache $1.20
 #     read_count          Guided/total reads                     8/15 reads
 #     autotune            Autotune progress                      23/50
-#     lines_changed       Lines added/removed                    +772/-109L
 #
-#   Debrief
-#     input_tokens        Session input tokens                   in:50k
-#     output_tokens       Session output tokens                  out:12k
-#     flow                Burst throughput                       45.2 tok/s
-#
-#   Intel
+#   Intel (learning engine)
 #     domains             Active domain count                    58 domains
 #     mastered            Core domains (survived autotune)       4 mastered
 #     observed            Files learned from                     284 observed
@@ -294,17 +362,101 @@ model
 #     concepts            Terms resolved                         89 concepts
 #     patterns            Bigrams captured                       256 patterns
 #     evidence            Cumulative domain hits                 42.5 evidence
+#     learning_speed      Domains discovered per prompt          0.8 d/prompt
+#     signal_clarity      Term-to-keyword resolution rate        signal 42%
+#     conversion          Domain-to-keyword conversion rate      conv 12%
 #
-#   Runway
+#   Debrief (session analysis)
+#     input_tokens        Session input tokens                   in:50k
+#     output_tokens       Session output tokens                  out:12k
+#     flow                Burst throughput (all streams)         45.2 tok/s
+#     pace                Visible conversation speed             pace 12.3/s
+#     turn_time           Average turn duration                  turn 8s
+#     turn_count          Exchange count                         42 turns
+#     leverage            Tools invoked per turn                 3.2 tools/turn
+#     amplification       Output/input character ratio           4.5x amp
+#     cost_per_exchange   Cost per turn                          $0.55/turn
+#
+#   Runway (context window projections)
 #     runway              Context runway estimate                runway 45m
 #     delta_minutes       Extra runway gained from aOa           +12m
 #
-#   Other
+#   Claude Code (from Claude, not aOa)
 #     context             Context window usage                   ctx:60k/200k (30%)
 #     model               Active model name                      Opus 4.6
-#     dashboard           Clickable link to aOa dashboard        dashboard
-# -----------------------------------------------------------------
+#     cost                Session cost                           $23.05
+#     lines_changed       Lines added/removed                    +772/-109L
 `
+
+// unconfigureStatusLine removes the aOa status line entry from
+// .claude/settings.local.json. If the file becomes empty, restores backup
+// or deletes it. Safe to call when .claude/ doesn't exist.
+func unconfigureStatusLine(root string) {
+	claudeDir := filepath.Join(root, ".claude")
+	settingsPath := filepath.Join(claudeDir, "settings.local.json")
+	backupPath := settingsPath + ".bak"
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return // file missing, nothing to undo
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return // unparseable, don't touch it
+	}
+
+	// Only remove if we put it there.
+	sl, ok := settings["statusLine"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	cmd, ok := sl["command"].(string)
+	if !ok || !strings.Contains(cmd, "aoa-status-line.sh") {
+		return
+	}
+
+	delete(settings, "statusLine")
+
+	if len(settings) == 0 {
+		// Settings map is empty — restore backup or delete file.
+		if _, err := os.Stat(backupPath); err == nil {
+			if err := os.Rename(backupPath, settingsPath); err == nil {
+				fmt.Println("restored .claude/settings.local.json from backup")
+			}
+		} else {
+			os.Remove(settingsPath)
+			// If .claude/ is now empty, remove it too.
+			entries, err := os.ReadDir(claudeDir)
+			if err == nil && len(entries) == 0 {
+				os.Remove(claudeDir)
+			}
+			fmt.Println("removed .claude/settings.local.json")
+		}
+		return
+	}
+
+	// Other keys remain — write back without statusLine.
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return
+	}
+	out = append(out, '\n')
+	if err := os.WriteFile(settingsPath, out, 0644); err == nil {
+		fmt.Println("removed aOa status line from .claude/settings.local.json")
+	}
+	// Clean up backup since we've preserved their other settings.
+	os.Remove(backupPath)
+}
+
+// seedStatusFile writes a minimal status.json so the hook doesn't show
+// "offline" on the very first prompt before the daemon writes real data.
+func seedStatusFile(paths *app.Paths) {
+	if _, err := os.Stat(paths.Status); err == nil {
+		return // already exists, don't overwrite
+	}
+	_ = status.WriteJSON(paths.Status, &status.StatusData{})
+}
 
 func writeDefaultStatusLineConf(root string) {
 	confPath := filepath.Join(root, ".aoa", "status-line.conf")

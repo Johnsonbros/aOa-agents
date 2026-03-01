@@ -392,7 +392,7 @@ func generateFullDownloadSh(grammarDir string, langs []string, platform, ext str
 	b.WriteString("done\n\n")
 
 	b.WriteString("echo \"\"\n")
-	b.WriteString("echo \"  Done. Finish setup:\"\n")
+	b.WriteString("echo \"  ✓ All grammars SHA-256 verified (github ↔ local)\"\n")
 	b.WriteString("echo \"\"\n")
 	b.WriteString("echo \"    aoa init\"\n")
 	b.WriteString("echo \"\"\n")
@@ -457,7 +457,7 @@ func generateDownloadSh(grammarDir string, missing []string, entries []ParserEnt
 	b.WriteString("done\n\n")
 
 	b.WriteString("echo \"\"\n")
-	b.WriteString("echo \"  Done. Finish setup:\"\n")
+	b.WriteString("echo \"  ✓ All grammars SHA-256 verified (github ↔ local)\"\n")
 	b.WriteString("echo \"\"\n")
 	b.WriteString("echo \"    aoa init\"\n")
 	b.WriteString("echo \"\"\n")

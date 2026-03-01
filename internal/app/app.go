@@ -989,6 +989,12 @@ func (a *App) onSessionEvent(ev ports.SessionEvent) {
 				if target == "" && ev.Tool.Command != "" {
 					target = a.truncate(ev.Tool.Command, 100)
 				}
+			default:
+				// Agent, TaskCreate, TaskUpdate, TaskList, TaskGet,
+				// EnterPlanMode, ExitPlanMode, AskUserQuestion,
+				// WebFetch, WebSearch, NotebookEdit, Skill, etc.
+				// These have no meaningful Live metrics — shown in Debrief only.
+				skipActivity = true
 			}
 
 			// L9.2: Extract tool detail fields
@@ -1151,6 +1157,38 @@ func (a *App) writeStatus(autotune *learner.AutotuneResult) {
 		guidedRatio = float64(a.sessionGuidedCount) / float64(a.sessionReadCount)
 	}
 
+	// Debrief derived metrics
+	turnCount := a.sessionMetrics.TurnCount
+	totalTools := a.toolMetrics.ReadCount + a.toolMetrics.WriteCount +
+		a.toolMetrics.EditCount + a.toolMetrics.BashCount +
+		a.toolMetrics.GrepCount + a.toolMetrics.GlobCount +
+		a.toolMetrics.OtherCount
+
+	var pace float64
+	if a.meter.ActiveMs > 0 {
+		convTokens := float64(a.meter.ConversationChars()) / 4.0
+		pace = convTokens / (float64(a.meter.ActiveMs) / 1000.0)
+	}
+
+	var avgTurnMs int
+	if turnCount > 0 && a.meter.ActiveMs > 0 {
+		avgTurnMs = int(a.meter.ActiveMs / int64(turnCount))
+	}
+
+	// Dollar metrics
+	pricing := GetModelPricing(model)
+	cacheReadTokens := a.sessionMetrics.CacheReadTokens
+	cacheSavedUSD := float64(cacheReadTokens) * (pricing.Input - pricing.CacheRead) / 1_000_000
+	costSavedUSD := float64(a.counterfactTokensSaved) * pricing.Input / 1_000_000
+
+	var costPerExchange float64
+	if turnCount > 0 {
+		totalCost := (float64(a.sessionMetrics.InputTokens)*pricing.Input +
+			float64(a.sessionMetrics.OutputTokens)*pricing.Output +
+			float64(cacheReadTokens)*pricing.CacheRead) / 1_000_000
+		costPerExchange = totalCost / float64(turnCount)
+	}
+
 	m := status.Metrics{
 		TokensSaved:     a.counterfactTokensSaved,
 		TimeSavedMs:     a.sessionTimeSavedMs,
@@ -1164,9 +1202,20 @@ func (a *App) writeStatus(autotune *learner.AutotuneResult) {
 		ShadowSaved:     a.shadowRing.TotalCharsSaved() / 4,
 
 		// Debrief
-		InputTokens:  a.sessionMetrics.InputTokens,
-		OutputTokens: a.sessionMetrics.OutputTokens,
-		Flow:         a.meter.BurstTokensPerSec(),
+		InputTokens:     a.sessionMetrics.InputTokens,
+		OutputTokens:    a.sessionMetrics.OutputTokens,
+		Flow:            a.meter.BurstTokensPerSec(),
+		Pace:            pace,
+		TurnTimeMs:      avgTurnMs,
+		Leverage:        0, // computed in Generate from TurnCount + ToolCount
+		Amplification:   0, // computed in Generate from UserChars + AssistantChars
+		CostPerExchange: costPerExchange,
+		CacheSavedUSD:   cacheSavedUSD,
+		CostSavedUSD:    costSavedUSD,
+		TurnCount:       turnCount,
+		UserChars:       a.meter.UserChars,
+		AssistantChars:  a.meter.AssistantChars,
+		ToolCount:       totalTools,
 	}
 
 	data := status.Generate(a.Learner.State(), a.lastAutotune, m)
@@ -1447,6 +1496,11 @@ func (a *App) ProjectConfig() socket.ProjectConfigResult {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 
+	var dbSize int64
+	if info, err := os.Stat(a.dbPath); err == nil {
+		dbSize = info.Size()
+	}
+
 	return socket.ProjectConfigResult{
 		ProjectRoot:   a.ProjectRoot,
 		ProjectID:     a.ProjectID,
@@ -1458,7 +1512,14 @@ func (a *App) ProjectConfig() socket.ProjectConfigResult {
 		Version:       version.Version,
 		BuildDate:     version.BuildDate,
 		HeapAllocMB:   float64(mem.HeapAlloc) / (1024 * 1024),
+		SysMB:         float64(mem.Sys) / (1024 * 1024),
+		HeapObjects:   mem.HeapObjects,
+		NumGC:         mem.NumGC,
 		Goroutines:    runtime.NumGoroutine(),
+		NumCPU:        runtime.NumCPU(),
+		Platform:      runtime.GOOS + "/" + runtime.GOARCH,
+		GoVersion:     runtime.Version(),
+		DBSizeBytes:   dbSize,
 	}
 }
 

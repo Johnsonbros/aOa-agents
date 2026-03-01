@@ -333,7 +333,14 @@ type ProjectConfigResult struct {
 	Version       string  `json:"version"`
 	BuildDate     string  `json:"build_date"`
 	HeapAllocMB   float64 `json:"heap_alloc_mb"`
+	SysMB         float64 `json:"sys_mb"`
+	HeapObjects   uint64  `json:"heap_objects"`
+	NumGC         uint32  `json:"num_gc"`
 	Goroutines    int     `json:"goroutines"`
+	NumCPU        int     `json:"num_cpu"`
+	Platform      string  `json:"platform"`
+	GoVersion     string  `json:"go_version"`
+	DBSizeBytes   int64   `json:"db_size_bytes"`
 }
 
 // ReindexResult is the result of a reindex request.

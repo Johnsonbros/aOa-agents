@@ -71,6 +71,20 @@ function fmtMin(min) {
   if (min >= 60) return Math.floor(min / 60) + 'h ' + Math.round(min % 60) + 'm';
   return Math.round(min) + 'm';
 }
+function fmtDuration(sec) {
+  if (!sec || sec <= 0) return '-';
+  var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+  if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+  return m + 'm ' + s + 's';
+}
+function fmtBytes(b) {
+  if (!b || b <= 0) return '-';
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+  return b + ' B';
+}
 
 /* ── Pricing ── */
 var PRICING = {
@@ -319,19 +333,21 @@ function poll() {
     var badge = document.getElementById('statusBadge');
     badge.className = 'status-badge live';
     setText('statusText', 'LIVE');
-    setText('footerStatus', 'Online');
     // Fetch version once (doesn't change during daemon lifetime)
     if (!cache.config) {
       safeFetch('/api/config').then(function(c) {
         cache.config = c;
-        if (c.version) setText('footerVersion', c.version);
+        if (c.version) {
+          var v = c.version;
+          if (c.build_date) v += ' (' + c.build_date.split('T')[0] + ')';
+          setText('footerVersion', v);
+        }
       }).catch(function() {});
     }
   }).catch(function() {
     var badge = document.getElementById('statusBadge');
     badge.className = 'status-badge offline';
     setText('statusText', 'OFFLINE');
-    setText('footerStatus', 'Offline');
   });
 
   switch (activeTab) {
@@ -1338,19 +1354,17 @@ function renderArsenal() {
   }
   document.getElementById('sessionTbody').innerHTML = shtml;
 
-  // System Status — Go runtime + intelligence state
-  setText('sys-uptime', cf.uptime_seconds ? fmtMin(cf.uptime_seconds / 60) : '-');
-  setText('sys-db', cf.db_path ? truncPath(cf.db_path, 30) : '-');
-  setText('sys-files', cf.index_files || '-');
-  setText('sys-tokens', cf.index_tokens || '-');
-  // Go runtime stats (from /api/config if available)
+  // System Status — operational runtime
+  setText('sys-uptime', cf.uptime_seconds ? fmtDuration(cf.uptime_seconds) : '-');
+  setText('sys-platform', cf.platform || '-');
+  setText('sys-cpus', cf.num_cpu || '-');
+  setText('sys-goversion', cf.go_version ? cf.go_version.replace('go', '') : '-');
   setText('sys-heap', cf.heap_alloc_mb ? cf.heap_alloc_mb.toFixed(1) + ' MB' : '-');
+  setText('sys-sys', cf.sys_mb ? cf.sys_mb.toFixed(1) + ' MB' : '-');
+  setText('sys-objects', cf.heap_objects ? fmtK(cf.heap_objects) : '-');
+  setText('sys-gc', cf.num_gc != null ? cf.num_gc + ' cycles' : '-');
   setText('sys-goroutines', cf.goroutines || '-');
-  // Intelligence state (from /api/stats)
-  var st = cache.stats || {};
-  setText('sys-domains', st.domain_count || '-');
-  setText('sys-bigrams', st.bigram_count || '-');
-  setText('sys-recon', cf.recon_available ? (cf.recon_findings || 0) + ' findings' : 'off');
+  setText('sys-db', cf.db_size_bytes ? fmtBytes(cf.db_size_bytes) : '-');
 
   // Learning Curve — dual axis
   renderLearningCurve(sessions);

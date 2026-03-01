@@ -66,7 +66,19 @@ func runDaemonStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parent: spawn the daemon as a detached background process.
-	return spawnDaemon(root, sockPath)
+	paths := app.NewPaths(root)
+	dashURL, err := spawnDaemon(root, sockPath)
+	if err != nil {
+		return err
+	}
+	pid, _ := readPID(paths.PIDFile)
+	fmt.Printf("⚡ daemon started (pid %d) — aOa %s\n", pid, version.String())
+	fmt.Printf("  log: %s\n", paths.DaemonLog)
+	if dashURL != "" {
+		fmt.Printf("  dashboard: %s\n", dashURL)
+	}
+	fmt.Printf("  caches warming in background (watch: tail -f %s)\n", paths.DaemonLog)
+	return nil
 }
 
 func runDaemonRestart(cmd *cobra.Command, args []string) error {
@@ -83,10 +95,11 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 // spawnDaemon re-execs the current binary as a background process with
 // stdout/stderr directed to .aoa/log/daemon.log. It waits until the socket
 // becomes reachable (or the child exits early) before returning.
-func spawnDaemon(root, sockPath string) error {
+// Returns the dashboard URL (may be empty if HTTP is not enabled) and any error.
+func spawnDaemon(root, sockPath string) (string, error) {
 	paths := app.NewPaths(root)
 	if err := paths.EnsureDirs(); err != nil {
-		return fmt.Errorf("create .aoa dirs: %w", err)
+		return "", fmt.Errorf("create .aoa dirs: %w", err)
 	}
 
 	// Size-based log rotation: >1MB -> daemon.log.1
@@ -95,13 +108,13 @@ func spawnDaemon(root, sockPath string) error {
 	}
 	logFile, err := os.OpenFile(paths.DaemonLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return fmt.Errorf("open daemon log: %w", err)
+		return "", fmt.Errorf("open daemon log: %w", err)
 	}
 
 	exePath, err := os.Executable()
 	if err != nil {
 		logFile.Close()
-		return fmt.Errorf("resolve executable path: %w", err)
+		return "", fmt.Errorf("resolve executable path: %w", err)
 	}
 
 	child := exec.Command(exePath, "daemon", "start")
@@ -113,7 +126,7 @@ func spawnDaemon(root, sockPath string) error {
 
 	if err := child.Start(); err != nil {
 		logFile.Close()
-		return fmt.Errorf("spawn daemon: %w", err)
+		return "", fmt.Errorf("spawn daemon: %w", err)
 	}
 
 	pid := child.Process.Pid
@@ -139,26 +152,22 @@ func spawnDaemon(root, sockPath string) error {
 			// Child exited early — read the log tail so the user sees why.
 			detail := readLogTail(paths.DaemonLog, 10)
 			if detail != "" {
-				return fmt.Errorf("daemon failed to start:\n%s", detail)
+				return "", fmt.Errorf("daemon failed to start:\n%s", detail)
 			}
-			return fmt.Errorf("daemon failed to start\n  → check log: %s", paths.DaemonLog)
+			return "", fmt.Errorf("daemon failed to start\n  → check log: %s", paths.DaemonLog)
 		default:
 		}
 		if client.Ping() {
-			fmt.Printf("⚡ daemon started (pid %d) — aOa %s\n", pid, version.String())
-			fmt.Printf("  log: %s\n", paths.DaemonLog)
-			// Show dashboard URL if HTTP port file exists
+			dashURL := ""
 			if portData, err := os.ReadFile(paths.PortFile); err == nil {
-				fmt.Printf("  dashboard: http://localhost:%s\n", strings.TrimSpace(string(portData)))
+				dashURL = "http://localhost:" + strings.TrimSpace(string(portData))
 			}
-			// Brief tail of the log to show warmup progress
-			fmt.Printf("  caches warming in background (watch: tail -f %s)\n", paths.DaemonLog)
-			return nil
+			return dashURL, nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return fmt.Errorf("daemon not responding after start\n  → check log: %s", paths.DaemonLog)
+	return "", fmt.Errorf("daemon not responding after start\n  → check log: %s", paths.DaemonLog)
 }
 
 // readLogTail returns the last n lines of a file, or empty string on error.

@@ -67,6 +67,9 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	// Clean up socket file.
 	os.Remove(sockPath)
 
+	// Clean up status line config from .claude/settings.local.json.
+	unconfigureStatusLine(root)
+
 	// Remove the entire .aoa/ directory.
 	if err := os.RemoveAll(aOaDir); err != nil {
 		return fmt.Errorf("remove %s: %w", aOaDir, err)

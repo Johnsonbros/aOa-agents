@@ -13,7 +13,7 @@
 #   stdin                  = Claude Code JSON (context_window, model, cwd, cost)
 #   .aoa/status.json       = daemon-written metrics
 #   .aoa/status-line.conf  = user segment config (optional)
-#   .aoa/http.port         = dashboard port (for dashboard segment)
+#   .aoa/run/http.port     = dashboard port (for dashboard segment)
 #
 # =============================================================================
 
@@ -55,7 +55,7 @@ COST_USD=${COST_USD:-0}
 
 # === READ DAEMON STATUS ===
 DAEMON_ONLINE=false
-INTENTS=0; TOKENS_SAVED=0; TIME_SAVED_MS=0; BURN_RATE=0
+INPUTS=0; TOKENS_SAVED=0; TIME_SAVED_MS=0; BURN_RATE=0
 GUIDED_RATIO=0; READ_COUNT=0; GUIDED_READ_COUNT=0
 RUNWAY_MIN=0; DELTA_MIN=0; CACHE_HIT=0; SHADOW_SAVED=0
 DOMAINS=0; AUTOTUNE_PROGRESS=0
@@ -65,7 +65,7 @@ INPUT_TOKENS=0; OUTPUT_TOKENS=0; FLOW=0
 if [ -f "$STATUS_FILE" ]; then
     DAEMON_ONLINE=true
     # Live
-    INTENTS=$(jq -r '.intents // 0' "$STATUS_FILE" 2>/dev/null)
+    INPUTS=$(jq -r '.intents // 0' "$STATUS_FILE" 2>/dev/null)
     TOKENS_SAVED=$(jq -r '.tokens_saved // 0' "$STATUS_FILE" 2>/dev/null)
     TIME_SAVED_MS=$(jq -r '.time_saved_ms // 0' "$STATUS_FILE" 2>/dev/null)
     BURN_RATE=$(jq -r '.burn_rate_per_min // 0' "$STATUS_FILE" 2>/dev/null)
@@ -86,12 +86,24 @@ if [ -f "$STATUS_FILE" ]; then
     CONCEPTS=$(jq -r '.concepts // 0' "$STATUS_FILE" 2>/dev/null)
     PATTERNS=$(jq -r '.patterns // 0' "$STATUS_FILE" 2>/dev/null)
     EVIDENCE=$(jq -r '.evidence // 0' "$STATUS_FILE" 2>/dev/null)
+    # Intel (derived)
+    LEARNING_SPEED=$(jq -r '.learning_speed // 0' "$STATUS_FILE" 2>/dev/null)
+    SIGNAL_CLARITY=$(jq -r '.signal_clarity // 0' "$STATUS_FILE" 2>/dev/null)
+    CONVERSION=$(jq -r '.conversion // 0' "$STATUS_FILE" 2>/dev/null)
     # Debrief
     INPUT_TOKENS=$(jq -r '.input_tokens // 0' "$STATUS_FILE" 2>/dev/null)
     OUTPUT_TOKENS=$(jq -r '.output_tokens // 0' "$STATUS_FILE" 2>/dev/null)
     FLOW=$(jq -r '.flow // 0' "$STATUS_FILE" 2>/dev/null)
+    PACE=$(jq -r '.pace // 0' "$STATUS_FILE" 2>/dev/null)
+    TURN_TIME_MS=$(jq -r '.turn_time_ms // 0' "$STATUS_FILE" 2>/dev/null)
+    LEVERAGE=$(jq -r '.leverage // 0' "$STATUS_FILE" 2>/dev/null)
+    AMPLIFICATION=$(jq -r '.amplification // 0' "$STATUS_FILE" 2>/dev/null)
+    COST_PER_EXCHANGE=$(jq -r '.cost_per_exchange // 0' "$STATUS_FILE" 2>/dev/null)
+    CACHE_SAVED_USD=$(jq -r '.cache_saved_usd // 0' "$STATUS_FILE" 2>/dev/null)
+    COST_SAVED_USD=$(jq -r '.cost_saved_usd // 0' "$STATUS_FILE" 2>/dev/null)
+    TURN_COUNT=$(jq -r '.turn_count // 0' "$STATUS_FILE" 2>/dev/null)
     # Defaults
-    INTENTS=${INTENTS:-0}; TOKENS_SAVED=${TOKENS_SAVED:-0}; TIME_SAVED_MS=${TIME_SAVED_MS:-0}
+    INPUTS=${INPUTS:-0}; TOKENS_SAVED=${TOKENS_SAVED:-0}; TIME_SAVED_MS=${TIME_SAVED_MS:-0}
 fi
 
 # === LINE 1: Environment Context ===
@@ -129,8 +141,8 @@ echo -e "${LINE1}"
 
 format_tokens() {
     local n=$1
-    if [ "$n" -ge 1000000 ]; then awk "BEGIN {printf \"%.2fM\", $n/1000000}"
-    elif [ "$n" -ge 1000 ]; then  awk "BEGIN {printf \"%.2fk\", $n/1000}"
+    if [ "$n" -ge 1000000 ]; then awk "BEGIN {printf \"%.1fM\", $n/1000000}"
+    elif [ "$n" -ge 1000 ]; then  awk "BEGIN {printf \"%.1fk\", $n/1000}"
     else echo "$n"; fi
 }
 
@@ -146,10 +158,11 @@ format_time() {
     local secs=$((ms / 1000))
     if [ "$secs" -lt 60 ]; then echo "${secs}s"
     elif [ "$secs" -lt 3600 ]; then
-        local m=$((secs / 60)); local s=$((secs % 60))
-        if [ "$s" -gt 0 ]; then echo "${m}m${s}s"; else echo "${m}m"; fi
+        local m=$(( (secs + 30) / 60 ))
+        echo "${m}m"
     else
-        local h=$((secs / 3600)); local m=$(( (secs % 3600) / 60 ))
+        local total_m=$(( (secs + 30) / 60 ))
+        local h=$((total_m / 60)); local m=$((total_m % 60))
         if [ "$m" -gt 0 ]; then echo "${h}h${m}m"; else echo "${h}h"; fi
     fi
 }
@@ -173,22 +186,24 @@ format_float1() { awk "BEGIN {printf \"%.1f\", $1}"; }
 
 # ── Live ──
 
-render_intents() {
+render_input() {
     local light intent_display
-    if [ "$INTENTS" -lt 30 ] 2>/dev/null; then
+    if [ "$INPUTS" -lt 30 ] 2>/dev/null; then
         light="${GRAY}⚪${RESET}"; intent_display="learning"
-    elif [ "$INTENTS" -lt 100 ] 2>/dev/null; then
-        light="${YELLOW}🟡${RESET}"; intent_display="${INTENTS}"
+    elif [ "$INPUTS" -lt 100 ] 2>/dev/null; then
+        light="${YELLOW}🟡${RESET}"; intent_display="${INPUTS}"
     else
-        light="${GREEN}🟢${RESET}"; intent_display="${INTENTS}"
+        light="${GREEN}🟢${RESET}"; intent_display="${INPUTS}"
     fi
-    [ "$INTENTS" -ge 1000 ] 2>/dev/null && intent_display=$(format_tokens $INTENTS)
+    [ "$INPUTS" -ge 1000 ] 2>/dev/null && intent_display=$(format_tokens $INPUTS)
     echo "${light} ${intent_display}"
 }
 
+# ── Live (dashboard: green/cyan/red/purple/green) ──
+
 render_tokens_saved() {
     [ "$TOKENS_SAVED" -gt 0 ] 2>/dev/null || return
-    echo "↓$(format_tokens $TOKENS_SAVED)"
+    echo "${GREEN}↓$(format_tokens $TOKENS_SAVED)${RESET}"
 }
 
 render_time_saved_range() {
@@ -196,113 +211,168 @@ render_time_saved_range() {
     local low_fmt high_fmt
     low_fmt=$(format_time $TIME_SAVED_MS)
     high_fmt=$(format_time $((TOKENS_SAVED * 200)))
-    [ "$TIME_SAVED_MS" -gt 0 ] 2>/dev/null && echo "${CYAN}⚡${low_fmt}-${high_fmt} saved${RESET}"
+    [ "$TIME_SAVED_MS" -gt 0 ] 2>/dev/null && echo "${CYAN}${low_fmt}-${high_fmt}${RESET}${DIM} saved${RESET}"
+}
+
+render_cost_saved() {
+    gt0 "$COST_SAVED_USD" || return
+    echo "${GREEN}$(format_dollars $COST_SAVED_USD)${RESET}${DIM} saved${RESET}"
 }
 
 render_burn_rate() {
     gt0 "$BURN_RATE" || return
-    echo "🔥$(format_tokens $(awk "BEGIN {printf \"%d\", $BURN_RATE}"))/min"
+    echo "🔥${RED}$(format_tokens $(awk "BEGIN {printf \"%d\", $BURN_RATE}"))${RESET}${DIM}/min${RESET}"
 }
 
 render_cost() {
     gt0 "$COST_USD" || return
-    echo "$(format_dollars $COST_USD)"
+    echo "${PURPLE}$(format_dollars $COST_USD)${RESET}"
 }
 
 render_guided_ratio() {
     [ "$READ_COUNT" -gt 0 ] 2>/dev/null || return
-    echo "guided $(format_pct $GUIDED_RATIO)"
+    echo "${GREEN}$(format_pct $GUIDED_RATIO)${RESET}${DIM} guided${RESET}"
 }
 
 render_shadow_saved() {
     [ "$SHADOW_SAVED" -gt 0 ] 2>/dev/null || return
-    echo "shadow ↓$(format_tokens $SHADOW_SAVED)"
+    echo "${GREEN}↓$(format_tokens $SHADOW_SAVED)${RESET}${DIM} shadow${RESET}"
 }
 
 render_cache_hit_rate() {
     gt0 "$CACHE_HIT" || return
-    echo "cache $(format_pct $CACHE_HIT)"
+    echo "${PURPLE}$(format_pct $CACHE_HIT)${RESET}${DIM} cache${RESET}"
+}
+
+render_cache_saved() {
+    gt0 "$CACHE_SAVED_USD" || return
+    echo "${PURPLE}$(format_dollars $CACHE_SAVED_USD)${RESET}${DIM} cache${RESET}"
 }
 
 render_read_count() {
     [ "$READ_COUNT" -gt 0 ] 2>/dev/null || return
-    echo "${GUIDED_READ_COUNT}/${READ_COUNT} reads"
+    echo "${GREEN}${GUIDED_READ_COUNT}/${READ_COUNT}${RESET}${DIM} reads${RESET}"
 }
 
 render_autotune() {
-    echo "${AUTOTUNE_PROGRESS}/50"
+    echo "${YELLOW}${AUTOTUNE_PROGRESS}/50${RESET}"
 }
 
 render_lines_changed() {
     local total=$((LINES_ADD + LINES_REM))
     [ "$total" -gt 0 ] 2>/dev/null || return
-    echo "${GREEN}+${LINES_ADD}${RESET}/${RED}-${LINES_REM}${RESET}L"
+    echo "${GREEN}+${LINES_ADD}${RESET}${DIM}/${RESET}${RED}-${LINES_REM}${RESET}${DIM}L${RESET}"
 }
 
 # ── Runway ──
 
 render_runway() {
     gt0 "$RUNWAY_MIN" || return
-    echo "runway $(format_minutes $RUNWAY_MIN)"
+    echo "${CYAN}$(format_minutes $RUNWAY_MIN)${RESET}${DIM} runway${RESET}"
 }
 
 render_delta_minutes() {
     gt0 "$DELTA_MIN" || return
-    echo "+$(format_minutes $DELTA_MIN)"
+    echo "${GREEN}+$(format_minutes $DELTA_MIN)${RESET}"
 }
 
-# ── Intel ──
+# ── Intel (dashboard: purple/blue/cyan/green/purple/yellow/red) ──
 
 render_domains() {
     [ "$DOMAINS" -gt 0 ] 2>/dev/null || return
-    echo "${DOMAINS} domains"
+    echo "${PURPLE}${DOMAINS}${RESET}${DIM} domains${RESET}"
 }
 
 render_mastered() {
     [ "$MASTERED" -gt 0 ] 2>/dev/null || return
-    echo "${PURPLE}${MASTERED} mastered${RESET}"
+    echo "${PURPLE}${MASTERED}${RESET}${DIM} mastered${RESET}"
 }
 
 render_observed() {
     [ "$OBSERVED" -gt 0 ] 2>/dev/null || return
-    echo "${OBSERVED} observed"
+    echo "${BLUE}${OBSERVED}${RESET}${DIM} observed${RESET}"
 }
 
 render_vocabulary() {
     [ "$VOCABULARY" -gt 0 ] 2>/dev/null || return
-    echo "$(format_tokens $VOCABULARY) keywords"
+    echo "${CYAN}$(format_tokens $VOCABULARY)${RESET}${DIM} keywords${RESET}"
 }
 
 render_concepts() {
     [ "$CONCEPTS" -gt 0 ] 2>/dev/null || return
-    echo "${CONCEPTS} concepts"
+    echo "${GREEN}${CONCEPTS}${RESET}${DIM} concepts${RESET}"
 }
 
 render_patterns() {
     [ "$PATTERNS" -gt 0 ] 2>/dev/null || return
-    echo "$(format_tokens $PATTERNS) patterns"
+    echo "${YELLOW}$(format_tokens $PATTERNS)${RESET}${DIM} patterns${RESET}"
 }
 
 render_evidence() {
     gt0 "$EVIDENCE" || return
-    echo "$(format_float1 $EVIDENCE) evidence"
+    echo "${RED}$(format_float1 $EVIDENCE)${RESET}${DIM} evidence${RESET}"
 }
 
-# ── Debrief ──
+render_learning_speed() {
+    gt0 "$LEARNING_SPEED" || return
+    echo "${GREEN}$(format_float1 $LEARNING_SPEED)${RESET}${DIM} d/prompt${RESET}"
+}
+
+render_signal_clarity() {
+    gt0 "$SIGNAL_CLARITY" || return
+    echo "${CYAN}$(format_pct $SIGNAL_CLARITY)${RESET}${DIM} signal${RESET}"
+}
+
+render_conversion() {
+    gt0 "$CONVERSION" || return
+    echo "${YELLOW}$(format_pct $CONVERSION)${RESET}${DIM} conv${RESET}"
+}
+
+# ── Debrief (dashboard: cyan/green/blue/green/cyan/yellow/purple/purple) ──
 
 render_input_tokens() {
     [ "$INPUT_TOKENS" -gt 0 ] 2>/dev/null || return
-    echo "in:$(format_tokens $INPUT_TOKENS)"
+    echo "${CYAN}$(format_tokens $INPUT_TOKENS)${RESET}${DIM} in${RESET}"
 }
 
 render_output_tokens() {
     [ "$OUTPUT_TOKENS" -gt 0 ] 2>/dev/null || return
-    echo "out:$(format_tokens $OUTPUT_TOKENS)"
+    echo "${GREEN}$(format_tokens $OUTPUT_TOKENS)${RESET}${DIM} out${RESET}"
 }
 
 render_flow() {
     gt0 "$FLOW" || return
-    echo "$(format_float1 $FLOW) tok/s"
+    echo "${BLUE}$(format_float1 $FLOW)${RESET}${DIM} tok/s${RESET}"
+}
+
+render_pace() {
+    gt0 "$PACE" || return
+    echo "${GREEN}$(format_float1 $PACE)${RESET}${DIM}/s${RESET}"
+}
+
+render_turn_time() {
+    [ "$TURN_TIME_MS" -gt 0 ] 2>/dev/null || return
+    echo "${CYAN}$(format_time $TURN_TIME_MS)${RESET}${DIM}/turn${RESET}"
+}
+
+render_leverage() {
+    gt0 "$LEVERAGE" || return
+    echo "${YELLOW}$(format_float1 $LEVERAGE)${RESET}${DIM} tools/turn${RESET}"
+}
+
+render_amplification() {
+    gt0 "$AMPLIFICATION" || return
+    echo "${PURPLE}$(format_float1 $AMPLIFICATION)x${RESET}"
+}
+
+render_cost_per_exchange() {
+    gt0 "$COST_PER_EXCHANGE" || return
+    echo "${PURPLE}$(format_dollars $COST_PER_EXCHANGE)${RESET}${DIM}/turn${RESET}"
+}
+
+render_turn_count() {
+    [ "$TURN_COUNT" -gt 0 ] 2>/dev/null || return
+    echo "${CYAN}${TURN_COUNT}${RESET}${DIM} turns${RESET}"
 }
 
 # ── Right side ──
@@ -330,13 +400,36 @@ render_model() {
 }
 
 render_dashboard() {
-    local port_file="$PROJECT_DIR/.aoa/http.port"
-    [ -f "$port_file" ] || return
-    local port=$(cat "$port_file" 2>/dev/null)
-    [ -n "$port" ] || return
-    local url="http://localhost:${port}"
-    # OSC 8 terminal hyperlink
-    echo "\033]8;;${url}\033\\${DIM}dashboard${RESET}\033]8;;\033\\"
+    # Kept for backward compat if used as a standalone segment — now a no-op.
+    # Dashboard link is rendered as part of the ⚡ aOa header instead.
+    return
+}
+
+# aoa_header outputs "⚡ aOa <traffic_light>" — the aOa name is wrapped
+# in an OSC 8 hyperlink to the dashboard when running. The traffic light
+# always follows, showing learning maturity based on input count.
+aoa_header() {
+    local label="${CYAN}${BOLD}⚡ aOa${RESET}"
+    local port_file="$PROJECT_DIR/.aoa/run/http.port"
+    if [ -f "$port_file" ]; then
+        local port=$(cat "$port_file" 2>/dev/null)
+        if [ -n "$port" ]; then
+            label="\033]8;;http://localhost:${port}\a${label}\033]8;;\a"
+        fi
+    fi
+
+    # Traffic light: learning maturity based on input count
+    local light input_display
+    if [ "$INPUTS" -lt 30 ] 2>/dev/null; then
+        light="${GRAY}⚪${RESET}"; input_display="learning"
+    elif [ "$INPUTS" -lt 100 ] 2>/dev/null; then
+        light="${YELLOW}🟡${RESET}"; input_display="${INPUTS}"
+    else
+        light="${GREEN}🟢${RESET}"; input_display="${INPUTS}"
+    fi
+    [ "$INPUTS" -ge 1000 ] 2>/dev/null && input_display=$(format_tokens $INPUTS)
+
+    echo "${label} ${light} ${input_display}"
 }
 
 # === READ SEGMENT CONFIG ===
@@ -348,7 +441,7 @@ if [ -f "$CONF_FILE" ]; then
         [ -n "$line" ] && SEGMENTS+=("$line")
     done < "$CONF_FILE"
 fi
-[ ${#SEGMENTS[@]} -eq 0 ] && SEGMENTS=(intents tokens_saved time_saved_range context model)
+[ ${#SEGMENTS[@]} -eq 0 ] && SEGMENTS=(tokens_saved time_saved_range context model)
 
 # === WRITE CONTEXT SNAPSHOT TO .aoa/context.jsonl ===
 if [ -d "$PROJECT_DIR/.aoa" ]; then
@@ -381,7 +474,7 @@ fi
 
 # === BUILD LINE 2 ===
 if [ "$DAEMON_ONLINE" = "false" ]; then
-    LINE2="${CYAN}${BOLD}⚡ aOa${RESET} ${DIM}offline${RESET}"
+    LINE2="$(aoa_header) ${DIM}offline${RESET}"
     for seg in "${SEGMENTS[@]}"; do
         case "$seg" in
             context) LINE2="${LINE2} ${SEP} $(render_context)" ;;
@@ -392,13 +485,11 @@ if [ "$DAEMON_ONLINE" = "false" ]; then
         esac
     done
 else
-    LINE2="${CYAN}${BOLD}⚡ aOa${RESET}"
-    first=true
+    LINE2="$(aoa_header)"
     for seg in "${SEGMENTS[@]}"; do
         result=""
         case "$seg" in
             # Live
-            intents)          result=$(render_intents) ;;
             tokens_saved)     result=$(render_tokens_saved) ;;
             time_saved_range) result=$(render_time_saved_range) ;;
             burn_rate)        result=$(render_burn_rate) ;;
@@ -420,22 +511,28 @@ else
             concepts)         result=$(render_concepts) ;;
             patterns)         result=$(render_patterns) ;;
             evidence)         result=$(render_evidence) ;;
+            learning_speed)   result=$(render_learning_speed) ;;
+            signal_clarity)   result=$(render_signal_clarity) ;;
+            conversion)       result=$(render_conversion) ;;
             # Debrief
             input_tokens)     result=$(render_input_tokens) ;;
             output_tokens)    result=$(render_output_tokens) ;;
             flow)             result=$(render_flow) ;;
+            pace)             result=$(render_pace) ;;
+            turn_time)        result=$(render_turn_time) ;;
+            leverage)         result=$(render_leverage) ;;
+            amplification)    result=$(render_amplification) ;;
+            cost_per_exchange) result=$(render_cost_per_exchange) ;;
+            cache_saved)      result=$(render_cache_saved) ;;
+            cost_saved)       result=$(render_cost_saved) ;;
+            turn_count)       result=$(render_turn_count) ;;
             # Right side
             context)          result=$(render_context) ;;
             model)            result=$(render_model) ;;
             dashboard)        result=$(render_dashboard) ;;
         esac
         if [ -n "$result" ]; then
-            if [ "$first" = true ]; then
-                LINE2="${LINE2} ${result}"
-                first=false
-            else
-                LINE2="${LINE2} ${SEP} ${result}"
-            fi
+            LINE2="${LINE2} ${SEP} ${result}"
         fi
     done
 fi

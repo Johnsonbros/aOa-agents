@@ -48,10 +48,23 @@ type StatusData struct {
 	Patterns   int     `json:"patterns"`   // bigrams captured
 	Evidence   float64 `json:"evidence"`   // cumulative domain hits
 
+	// Intel (derived)
+	LearningSpeed float64 `json:"learning_speed"` // domains per prompt
+	SignalClarity float64 `json:"signal_clarity"` // terms resolved / keywords
+	Conversion    float64 `json:"conversion"`     // domains / keywords
+
 	// Debrief (session metrics)
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	Flow         float64 `json:"flow"` // burst throughput tok/s
+	InputTokens     int     `json:"input_tokens"`
+	OutputTokens    int     `json:"output_tokens"`
+	Flow            float64 `json:"flow"`             // burst throughput tok/s
+	Pace            float64 `json:"pace"`             // visible conversation tok/s
+	TurnTimeMs      int     `json:"turn_time_ms"`     // avg turn duration
+	Leverage        float64 `json:"leverage"`         // tools per turn
+	Amplification   float64 `json:"amplification"`    // output chars / input chars
+	CostPerExchange float64 `json:"cost_per_exchange"` // cost / turns
+	CacheSavedUSD   float64 `json:"cache_saved_usd"`  // cache read savings in dollars
+	CostSavedUSD    float64 `json:"cost_saved_usd"`   // est. cost saved from guided reads
+	TurnCount       int     `json:"turn_count"`
 
 	Autotune *Tune `json:"autotune,omitempty"`
 }
@@ -81,9 +94,20 @@ type Metrics struct {
 	DeltaMinutes  float64
 
 	// Debrief
-	InputTokens  int
-	OutputTokens int
-	Flow         float64
+	InputTokens     int
+	OutputTokens    int
+	Flow            float64
+	Pace            float64
+	TurnTimeMs      int
+	Leverage        float64
+	Amplification   float64
+	CostPerExchange float64
+	CacheSavedUSD   float64
+	CostSavedUSD    float64
+	TurnCount       int
+	UserChars       int64
+	AssistantChars  int64
+	ToolCount       int
 }
 
 // Generate produces a StatusData from current learner state and runtime metrics.
@@ -98,10 +122,39 @@ func Generate(state *ports.LearnerState, autotune *learner.AutotuneResult, m Met
 		}
 	}
 
+	// Intel derived ratios
+	promptCount := int(state.PromptCount)
+	kwCount := len(state.KeywordHits)
+	termCount := len(state.TermHits)
+	domainCount := len(state.DomainMeta)
+
+	var learningSpeed, signalClarity, conversion float64
+	if promptCount > 0 {
+		learningSpeed = float64(domainCount) / float64(promptCount)
+	}
+	if kwCount > 0 {
+		signalClarity = float64(termCount) / float64(kwCount)
+		conversion = float64(domainCount) / float64(kwCount)
+	}
+
+	// Debrief derived metrics
+	var leverage, amplification, costPerExchange float64
+	var turnTimeMs int
+	if m.TurnCount > 0 {
+		leverage = float64(m.ToolCount) / float64(m.TurnCount)
+		costPerExchange = m.CostPerExchange
+		if m.TurnTimeMs > 0 {
+			turnTimeMs = m.TurnTimeMs
+		}
+	}
+	if m.UserChars > 0 {
+		amplification = float64(m.AssistantChars) / float64(m.UserChars)
+	}
+
 	sd := &StatusData{
 		// Live
 		Intents:          state.PromptCount,
-		Domains:          len(state.DomainMeta),
+		Domains:          domainCount,
 		TopDomains:       topDomains(state, 3),
 		TokensSaved:      m.TokensSaved,
 		TimeSavedMs:      m.TimeSavedMs,
@@ -118,17 +171,28 @@ func Generate(state *ports.LearnerState, autotune *learner.AutotuneResult, m Met
 		DeltaMinutes:  m.DeltaMinutes,
 
 		// Intel
-		Mastered:   coreCount,
-		Observed:   len(state.FileHits),
-		Vocabulary: len(state.KeywordHits),
-		Concepts:   len(state.TermHits),
-		Patterns:   len(state.Bigrams),
-		Evidence:   totalEvidence,
+		Mastered:      coreCount,
+		Observed:      len(state.FileHits),
+		Vocabulary:    kwCount,
+		Concepts:      termCount,
+		Patterns:      len(state.Bigrams),
+		Evidence:      totalEvidence,
+		LearningSpeed: learningSpeed,
+		SignalClarity: signalClarity,
+		Conversion:    conversion,
 
 		// Debrief
-		InputTokens:  m.InputTokens,
-		OutputTokens: m.OutputTokens,
-		Flow:         m.Flow,
+		InputTokens:     m.InputTokens,
+		OutputTokens:    m.OutputTokens,
+		Flow:            m.Flow,
+		Pace:            m.Pace,
+		TurnTimeMs:      turnTimeMs,
+		Leverage:        leverage,
+		Amplification:   amplification,
+		CostPerExchange: costPerExchange,
+		CacheSavedUSD:   m.CacheSavedUSD,
+		CostSavedUSD:    m.CostSavedUSD,
+		TurnCount:       m.TurnCount,
 	}
 	if autotune != nil {
 		sd.Autotune = &Tune{

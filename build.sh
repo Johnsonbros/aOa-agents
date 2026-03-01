@@ -7,7 +7,7 @@
 #   ./build.sh --light      # Light build (no tree-sitter, pure Go, minimal)
 set -euo pipefail
 
-VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS="-s -w -X github.com/corey/aoa/internal/version.Version=${VERSION} -X github.com/corey/aoa/internal/version.BuildDate=${BUILD_DATE}"
 

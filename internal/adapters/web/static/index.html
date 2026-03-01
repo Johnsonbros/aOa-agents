@@ -351,20 +351,22 @@
       </div>
     </div>
 
-    <!-- System Status — enhanced strip -->
+    <!-- System Status — operational strip -->
     <div class="card" style="flex-shrink:0">
       <div class="sys-strip">
-        <div class="sys-pair"><span class="sys-dot-live"></span><span class="sys-val text-green">Running</span></div>
-        <div class="sys-pair"><span class="sys-key">Up</span><span class="sys-val" id="sys-uptime">-</span></div>
-        <div class="sys-pair"><span class="sys-key">Heap</span><span class="sys-val" id="sys-heap">-</span></div>
-        <div class="sys-pair"><span class="sys-key">Goroutines</span><span class="sys-val" id="sys-goroutines">-</span></div>
-        <div class="sys-pair"><span class="sys-key">DB</span><span class="sys-val" id="sys-db">-</span></div>
+        <div class="sys-pair"><span class="sys-dot-live"></span><span class="sys-val text-green">Learning</span></div>
+        <div class="sys-pair"><span class="sys-key">Uptime</span><span class="sys-val text-green" id="sys-uptime">-</span></div>
+        <div class="sys-pair"><span class="sys-key">Platform</span><span class="sys-val text-blue" id="sys-platform">-</span></div>
+        <div class="sys-pair"><span class="sys-key">CPUs</span><span class="sys-val text-cyan" id="sys-cpus">-</span></div>
+        <div class="sys-pair"><span class="sys-key">Go</span><span class="sys-val" id="sys-goversion">-</span></div>
         <div class="sys-sep"></div>
-        <div class="sys-pair"><span class="sys-key">Files</span><span class="sys-val text-cyan" id="sys-files">-</span></div>
-        <div class="sys-pair"><span class="sys-key">Tokens</span><span class="sys-val" id="sys-tokens">-</span></div>
-        <div class="sys-pair"><span class="sys-key">Domains</span><span class="sys-val text-purple" id="sys-domains">-</span></div>
-        <div class="sys-pair"><span class="sys-key">Bigrams</span><span class="sys-val" id="sys-bigrams">-</span></div>
-        <div class="sys-pair"><span class="sys-key">Recon</span><span class="sys-val" id="sys-recon">-</span></div>
+        <div class="sys-pair"><span class="sys-key">Heap</span><span class="sys-val text-yellow" id="sys-heap">-</span></div>
+        <div class="sys-pair"><span class="sys-key">Sys</span><span class="sys-val text-yellow" id="sys-sys">-</span></div>
+        <div class="sys-pair"><span class="sys-key">Objects</span><span class="sys-val" id="sys-objects">-</span></div>
+        <div class="sys-pair"><span class="sys-key">GC</span><span class="sys-val text-purple" id="sys-gc">-</span></div>
+        <div class="sys-pair"><span class="sys-key">Goroutines</span><span class="sys-val text-cyan" id="sys-goroutines">-</span></div>
+        <div class="sys-sep"></div>
+        <div class="sys-pair"><span class="sys-key">DB</span><span class="sys-val" id="sys-db">-</span></div>
       </div>
     </div>
   </div>
@@ -374,7 +376,6 @@
 <!-- ══════ FOOTER ══════ -->
 <footer class="footer">
   <div class="footer-left">
-    <span class="footer-online"><span class="dot"></span> <span id="footerStatus">Online</span></span>
     <span id="footerVersion">-</span>
   </div>
   <div class="footer-right">
