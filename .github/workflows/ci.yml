@@ -115,9 +115,11 @@ jobs:
             os: darwin
             arch: amd64
             goarch: amd64
+            cgo: '1'
     runs-on: ${{ matrix.runner }}
     env:
       GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: ${{ matrix.cgo || '1' }}
     steps:
       - uses: actions/checkout@v4
         with:
