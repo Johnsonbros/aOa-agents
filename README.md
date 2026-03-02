@@ -1,14 +1,46 @@
-# aOa - Angle O(1)f Attack
+# aOa — Angle of Attack
 
-> **5 angles. 1 attack. 1 binary.** Save your tokens. Save your time. Zero Docker.
+> **Five angles. One attack. One binary.**
+>
+> Save your tokens. Save your time.
 
 ---
 
-## What Is aOa?
+## Two Commands, You're In
 
-**aOa** is a semantically compressed, intent-driven, predictive code intelligence engine for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+```bash
+npx @mvpscale/aoa init --update
+```
 
-Every time Claude searches your codebase, it burns tokens rediscovering code it already found yesterday. aOa captures the semantic fingerprint of every tool call, builds a map of your codebase by *meaning*, and feeds that context back automatically.
+That's it. aOa detects your languages, installs grammars, and starts learning. Have Claude Code use it and you're already saving tokens.
+
+Don't want npx? Install the binary directly:
+
+```bash
+npm install -g @mvpscale/aoa
+```
+
+---
+
+## What You Get
+
+<p align="center">
+  <img src="docs/screenshots/arsenal-hero.png" alt="aOa Arsenal — 98% token savings" width="700">
+</p>
+
+A local dashboard running on localhost — real-time, private, yours. See exactly what aOa is doing: token savings, search patterns, learned domains, activity feed. Nothing leaves your machine.
+
+---
+
+## What aOa Actually Does
+
+Claude Code burns tokens. Every session, it rediscovers code it already found — re-reading files, following long grep tails, searching the same paths. We identified **10-12 distinct token waste patterns** and eliminated them.
+
+**aOa hijacks grep.** When Claude runs `grep`, aOa intercepts it and returns semantically aware results. Not just string matches — the results that *matter*, ranked by what Claude actually needs, delivered in the top 10-15 hits. No full-file reads. No chasing irrelevant matches through thousand-line files.
+
+**aOa hijacks Claude itself.** It injects learned context directly into the status line — guiding Claude to the right files before it even searches. The result: **95-99% token savings** on search-heavy tasks.
+
+**Where it shines:** Refactoring large codebases. Security reviews. Debugging across modules. Any task where Claude would normally spend minutes re-reading code it touched yesterday. This isn't for greenfield — it's for the work that grinds tokens into dust.
 
 **Without aOa:**
 ```
@@ -24,37 +56,88 @@ aOa: [Context injected: auth.py, session.py, middleware.py]
 Claude: "I see the issue. Line 47."
 ```
 
-**150 tokens.** Same result. **99% savings.**
+**150 tokens.** Same result.
 
 ---
 
-## Why a Go Port?
+## Behind the Veil
 
-The [original aOa](https://github.com/MVP-Scale/aOa) ran as a Python service in Docker. It worked. But it could be better.
+aOa's dashboard gives you real-time visibility into what Claude is doing — and what aOa is learning. Every metric has a story. Hover any card in the dashboard for the full explanation.
 
-**aOa is a clean-room rewrite** that eliminates Docker entirely and delivers order-of-magnitude performance improvements:
+### Arsenal — Lifetime Performance
 
-| Metric | Python aOa | aOa | Improvement |
-|--------|-----------|--------|-------------|
-| Search latency | 8-15ms | <0.5ms | **16-30x faster** |
-| Autotune | 250-600ms | ~2.5&micro;s | **100,000x faster** |
-| Startup | 3-8s | <200ms | **15-40x faster** |
-| Memory | ~390MB | <50MB | **8x reduction** |
-| Install | Docker + docker-compose | Single binary | **Zero dependencies** |
-| Infrastructure | Redis + Python services | Embedded bbolt | **Zero services** |
+<p align="center">
+  <img src="docs/screenshots/arsenal-main.png" alt="aOa Arsenal dashboard" width="700">
+</p>
 
-One binary. No Docker. No Redis. No Python. Just download and run.
+Your command center across all sessions.
 
----
+| Metric | What It Tells You |
+|--------|-------------------|
+| **Cost Avoidance** | Lifetime dollars not spent because aOa guided Claude to read targeted file sections instead of entire files. The cumulative payoff of learning your codebase. |
+| **Sessions Extended** | Extra minutes of runway gained across all sessions. Time reclaimed by reducing context burn — sessions that lasted longer because aOa was working. |
+| **Cache Savings** | Lifetime dollars saved by Anthropic's prompt cache. A second value stream independent of guided reads — two mechanisms saving you money in parallel. |
+| **Efficiency** | Composite score across guided ratio, cache performance, and savings rate. A single grade for how well aOa is optimizing your workflow over time. |
 
-## Features
+### Live — Angle of Attack
 
-- **O(1) indexed search** -- same speed whether you have 100 files or 100,000
-- **28 languages** with structural parsing (tree-sitter compiled in), 57 total with tokenization
-- **134 semantic domains** embedded in the binary -- no AI calls needed to classify code
-- **Self-learning** -- gets smarter with every tool call, predicts files before you ask
-- **Session log tailing** -- learns from Claude Code sessions without any hooks
-- **Single 4.9MB binary** -- no runtime dependencies, no containers, no services
+<p align="center">
+  <img src="docs/screenshots/live-main.png" alt="aOa Live dashboard" width="700">
+</p>
+
+Real-time view of the current session. What's happening right now.
+
+| Metric | What It Tells You |
+|--------|-------------------|
+| **Tokens Saved** | Every token saved is a token that didn't consume your context window — keeping your session alive longer. |
+| **Est. Cost Saved** | Tokens saved converted to dollars at current API rates. Money that stayed in your pocket. |
+| **Time Saved** | Wall-clock time you didn't spend waiting. Based on median token generation speed. |
+| **Learning** | Autotune progress toward the next learning cycle. Every 50 prompts, aOa recalibrates its understanding of your project. |
+
+### Intel — Learning System
+
+<p align="center">
+  <img src="docs/screenshots/intel-main.png" alt="aOa Intel dashboard" width="700">
+</p>
+
+What aOa has learned about your codebase. Semantic domains, confidence tiers, competitive displacement in action.
+
+| Metric | What It Tells You |
+|--------|-------------------|
+| **Mastered** | Domains that earned core status through competitive displacement — areas where aOa's understanding is deepest. These survived decay, outlasted rivals, and proved their relevance. |
+| **Learning Speed** | How fast aOa is building new understanding. Domains discovered per prompt — rising means active exploration, flattening means the system is converging. |
+| **Signal Clarity** | What percentage of extracted terms resolve into real domains. Higher means the signal chain is clean — vocabulary is crystallizing into structured knowledge, not noise. |
+| **Conversion** | The intelligence funnel: raw keywords in, structured domains out. Shows how efficiently observation becomes understanding. |
+
+### Recon — Dimensional Analysis
+
+<p align="center">
+  <img src="docs/screenshots/recon-main.png" alt="aOa Recon dashboard" width="700">
+</p>
+
+Structural analysis of your codebase across multiple dimensions.
+
+| Metric | What It Tells You |
+|--------|-------------------|
+| **Files Scanned** | How many source files the dimensional analysis covered. More files scanned means broader coverage and a more trustworthy posture. |
+| **Findings** | Total issues discovered across all dimensions and severity levels. Each finding is a concrete improvement opportunity. |
+| **Critical** | High-severity findings that need attention now. These could affect security, reliability, or correctness — address these first. |
+| **Clean File %** | Percentage of scanned files with zero findings. The positive side of the story — higher means a healthier codebase. |
+
+### Debrief — Session Breakdown
+
+<p align="center">
+  <img src="docs/screenshots/debrief-main.png" alt="aOa Debrief dashboard" width="700">
+</p>
+
+The full conversation breakdown. See exactly what Claude saw, what it cost, and where the savings came from.
+
+| Metric | What It Tells You |
+|--------|-------------------|
+| **Input** | Everything you fed Claude this session — prompts, file contents, tool results. Each input token counts against your context window and your bill. |
+| **Output** | Everything Claude produced — code, explanations, tool calls, thinking. The work product of your session. |
+| **Cache Saved** | Dollars you didn't spend because Anthropic's prompt cache served repeated context at a fraction of the price. Free efficiency. |
+| **Cost/Exchange** | Average dollars per back-and-forth with Claude. Your unit price — useful for budgeting and comparing session efficiency. |
 
 ---
 
@@ -62,52 +145,25 @@ One binary. No Docker. No Redis. No Python. Just download and run.
 
 | Angle | What It Does |
 |-------|--------------|
-| **Search** | O(1) indexed lookup -- same syntax as grep, orders of magnitude faster |
+| **Search** | O(1) indexed lookup — same syntax as grep, orders of magnitude faster |
 | **File** | Navigate structure without reading everything |
 | **Behavioral** | Learns your work patterns, predicts next files |
-| **Outline** | Semantic compression -- searchable by meaning, not just keywords |
+| **Outline** | Semantic compression — searchable by meaning, not just keywords |
 | **Intent** | Tracks session activity, shows savings in real-time |
 
 All angles converge into **one confident answer**.
 
 ---
 
-## Quick Start
+## Self-Learning
 
-### Install
+aOa gets smarter every session. No configuration. No training. Just use it.
 
-```bash
-# Via npm (recommended)
-npm install -g @mvpscale/aoa
+1. **observe()** — Every search and tool call generates signals (keywords, terms, domains, file hits)
+2. **autotune** — Every 50 prompts, a 21-step optimization runs: decay old signals, deduplicate, rank domains, promote/demote, prune noise
+3. **competitive displacement** — Top 24 domains stay in core, others compete for relevance. Domains that stop appearing naturally fade out.
 
-# From source
-git clone https://github.com/MVP-Scale/aOa.git
-cd aOa
-./build.sh
-```
-
-### Initialize a Project
-
-```bash
-cd your-project
-aoa init
-```
-
-### Start Searching
-
-```bash
-aoa grep handleAuth
-```
-
-Instant results. O(1) lookup.
-
-### Run the Daemon
-
-```bash
-aoa daemon start
-```
-
-The daemon indexes your project, tails Claude Code session logs, and learns your patterns in the background.
+All learning happens locally. No network calls. No AI calls for classification. State persists across sessions automatically.
 
 ---
 
@@ -115,6 +171,7 @@ The daemon indexes your project, tails Claude Code session logs, and learns your
 
 | Command | Description |
 |---------|-------------|
+| `aoa init` | Initialize aOa for your project |
 | `aoa grep <pattern>` | O(1) indexed search (literal, OR, AND modes) |
 | `aoa egrep <pattern>` | Regex search with full flag parity |
 | `aoa find <glob>` | Glob-based file search |
@@ -129,11 +186,13 @@ The daemon indexes your project, tails Claude Code session logs, and learns your
 | `aoa wipe [--force]` | Clear project data |
 | `aoa daemon start\|stop` | Manage background daemon |
 
-### GNU Grep Parity
+---
 
-`aoa grep` and `aoa egrep` are drop-in replacements for GNU grep. When installed as shims (`~/.aoa/shims/grep`), AI agents use them transparently.
+## GNU Grep Parity
 
-**Three execution modes** -- 100% aligned with GNU grep behavior:
+`aoa grep` and `aoa egrep` are drop-in replacements for GNU grep. When installed as shims, AI agents use them transparently.
+
+**Three execution modes** — 100% aligned with GNU grep behavior:
 
 | Mode | Invocation | Behavior |
 |------|-----------|----------|
@@ -141,7 +200,7 @@ The daemon indexes your project, tails Claude Code session logs, and learns your
 | **Stdin filter** | `echo text \| grep pattern` | Filters piped input line by line |
 | **Index search** | `grep pattern` (no files, no pipe) | Falls back to aOa O(1) index |
 
-**22 flags implemented** -- covers all flags used by AI agents in testing:
+**22 of 28 GNU grep flags implemented natively** — covering 100% of observed AI agent usage:
 
 ```
 -i   Case insensitive          -n   Line numbers
@@ -158,91 +217,7 @@ The daemon indexes your project, tails Claude Code session logs, and learns your
 --color=auto|always|never               TTY-aware color
 ```
 
-**GNU grep compatibility details:**
-
-- Exit codes: 0 (match), 1 (no match), 2 (error) -- identical to GNU grep
-- Output: `file:line:content` with `:` for matches, `-` for context lines
-- Group separators: `--` between non-contiguous context groups
-- Binary detection: NUL in first 512 bytes prints `Binary file X matches`
-- Multi-file: auto-prefixes filenames when >1 file; `-H` forces, `-h` suppresses
-- ANSI: auto-stripped when stdout is not a TTY (piped/captured output is clean)
-- Fallback: unrecognized flags or daemon-down forwards to `/usr/bin/grep`
-
-**What's not implemented natively** (forwarded to system grep):
-
-| Flag | Description | Frequency |
-|------|-------------|-----------|
-| `-P` | Perl/PCRE regex | Rare in agent use |
-| `-x` | Match entire line | Rare |
-| `-f` | Patterns from file | Rare |
-| `-b` | Byte offset | Never seen in agent use |
-| `-Z` | NUL-terminated filenames | Never seen in agent use |
-| `-R` | Recursive + follow symlinks | Rare (agents use `-r`) |
-
-In practice: **22 of 28 GNU grep flags are native**, covering 100% of observed AI agent usage. The remaining 6 flags (<4% of GNU grep's flag surface) have never appeared in agent session logs and fall back to system grep automatically.
-
-```bash
-# All of these work as expected:
-aoa grep -rn "TODO" src/           # Recursive search with line numbers
-echo "data" | aoa grep pattern     # Stdin filtering
-aoa grep -E "err|warn" file.log    # Extended regex on a file
-aoa egrep -i "handle.*auth" .      # Case-insensitive regex, recursive
-aoa grep -e pat1 -e pat2 file.py   # Multiple patterns (OR)
-aoa grep -c -l pattern src/        # Count + filenames
-```
-
----
-
-## How It Works
-
-### Architecture
-
-aOa uses a hexagonal (ports/adapters) architecture:
-
-```
-cmd/aoa/              CLI entrypoint (cobra)
-
-internal/
-  domain/
-    index/            Search engine (O(1) token map, inverted index)
-    learner/          observe(), autotune, competitive displacement
-    enricher/         Keyword -> term -> domain resolution
-    status/           Status line generation
-
-  adapters/
-    bbolt/            Embedded key-value storage (crash-safe)
-    fsnotify/         File system watcher
-    tailer/           Session log tailer (defensive JSONL parser)
-    claude/           Claude Code session adapter
-    treesitter/       28-language structural parser
-    socket/           Unix socket daemon (JSON protocol)
-
-atlas/v1/             134 semantic domains (embedded via go:embed)
-```
-
-### Signal Chain
-
-```
-Claude Code JSONL session log
-  -> Tailer (file discovery, polling, dedup)
-    -> Parser (defensive, multi-path field extraction)
-      -> Claude Reader (Session Prism decomposition)
-        -> App (signal routing)
-          |-- User input   -> bigrams, status line
-          |-- AI response  -> bigrams
-          |-- Tool use     -> range gate -> file hits -> observe
-          |-- Search       -> keywords -> enricher -> learner
-```
-
-### Learning
-
-aOa watches Claude work and captures semantic signals:
-
-1. **observe()** -- Every search and tool call generates signals (keywords, terms, domains, file hits)
-2. **autotune** -- Every 50 prompts, a 21-step optimization runs: decay old signals, deduplicate, rank domains, promote/demote, prune noise
-3. **competitive displacement** -- Top 24 domains stay in core, others compete for relevance. Domains that stop appearing naturally fade out.
-
-All learning happens in-memory. State persists to bbolt on autotune and shutdown. No network calls. No AI calls for domain classification.
+Exit codes, output format, context separators, binary detection, multi-file prefixing, and ANSI handling all match GNU grep. Unrecognized flags fall back to system grep automatically.
 
 ---
 
@@ -252,11 +227,7 @@ All learning happens in-memory. State persists to bbolt on autotune and shutdown
 
 Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Kotlin, Scala, Swift, Bash, Lua, Haskell, OCaml, Zig, CUDA, Verilog, HTML, CSS, Svelte, JSON, YAML, TOML, HCL
 
-**29 additional languages** with tokenization-based indexing (awaiting upstream Go bindings):
-
-R, Julia, Markdown, Elixir, Erlang, Dart, Nim, Clojure, D, Gleam, Elm, PureScript, Odin, V, Ada, Fortran, Fennel, Groovy, GraphQL, CMake, Make, Nix, Objective-C, VHDL, GLSL, HLSL, SQL, Dockerfile, Vue
-
-**101 file extensions** mapped total.
+**29 additional languages** with tokenization-based indexing. **101 file extensions** mapped total.
 
 ---
 
@@ -271,16 +242,16 @@ aOa generates a status line that shows your session at a glance:
 | Confident | `aOa 69 \| 80k saved \| ctx:36k/200k (18%)` |
 | Long session | `aOa 247 \| 1.8M saved \| ctx:142k/200k (71%)` |
 
-Written to `.aoa/status.json` on every state change. Use the included hook or read it however you like.
+Written to `.aoa/status.json` on every state change.
 
 ---
 
 ## Your Data. Your Control.
 
-- **Local-only** -- single binary, no network calls, no containers
-- **No data leaves** -- your code stays on your machine
-- **Open source** -- Apache 2.0 licensed, fully auditable
-- **Explainable** -- `aoa intent recent` shows exactly what it learned
+- **Local-only** — single binary, no network calls, no containers
+- **No data leaves** — your code stays on your machine
+- **Open source** — Apache 2.0 licensed, fully auditable
+- **Explainable** — `aoa intent recent` shows exactly what it learned
 
 ---
 
@@ -300,11 +271,18 @@ Nothing else to clean up. No containers. No services. No config files scattered 
 
 ---
 
-## Project Status
+## Performance
 
-**631 tests passing.** Single binary ships with O(1) search, 28-language structural parsing, 134 semantic domains, self-learning, and GNU grep parity.
+The [original aOa](https://github.com/MVP-Scale/aOa) ran as a Python service in Docker. This is a clean-room Go rewrite:
 
-See [CHANGELOG.md](CHANGELOG.md) for release history.
+| Metric | Python aOa | aOa | Improvement |
+|--------|-----------|--------|-------------|
+| Search latency | 8-15ms | <0.5ms | **16-30x faster** |
+| Autotune | 250-600ms | ~2.5&micro;s | **100,000x faster** |
+| Startup | 3-8s | <200ms | **15-40x faster** |
+| Memory | ~390MB | <50MB | **8x reduction** |
+| Install | Docker + docker-compose | Single binary | **Zero dependencies** |
+| Infrastructure | Redis + Python services | Embedded bbolt | **Zero services** |
 
 ---
 
@@ -326,14 +304,14 @@ Build something that matters.
 
 aOa builds on outstanding open-source work:
 
-- **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** -- incremental parsing framework powering 28-language structural analysis
-- **[go-sitter-forest](https://github.com/alexaandru/go-sitter-forest)** -- Go bindings for 509 tree-sitter grammars, maintained by 346 contributors
-- **[cobra](https://github.com/spf13/cobra)** -- CLI framework
-- **[bbolt](https://go.etcd.io/bbolt)** -- embedded key-value store (crash-safe, zero-config)
-- **[fsnotify](https://github.com/fsnotify/fsnotify)** -- cross-platform file system notifications
-- **[purego](https://github.com/ebitengine/purego)** -- calling C from Go without CGO (used in grammar loading)
-- **[testify](https://github.com/stretchr/testify)** -- test assertions and requirements
-- **[aho-corasick](https://github.com/petar-dambovaliev/aho-corasick)** -- multi-pattern string matching
+- **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** — incremental parsing framework powering 28-language structural analysis
+- **[go-sitter-forest](https://github.com/alexaandru/go-sitter-forest)** — Go bindings for 509 tree-sitter grammars
+- **[cobra](https://github.com/spf13/cobra)** — CLI framework
+- **[bbolt](https://go.etcd.io/bbolt)** — embedded key-value store
+- **[fsnotify](https://github.com/fsnotify/fsnotify)** — cross-platform file system notifications
+- **[purego](https://github.com/ebitengine/purego)** — calling C from Go without CGO
+- **[testify](https://github.com/stretchr/testify)** — test assertions
+- **[aho-corasick](https://github.com/petar-dambovaliev/aho-corasick)** — multi-pattern string matching
 
 ---
 

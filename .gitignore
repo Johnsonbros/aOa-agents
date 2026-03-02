@@ -17,7 +17,8 @@ dist/
 .claude/
 CLAUDE.md
 deploy.sh
-docs/
+docs/*
+!docs/screenshots/
 
 # Claude Code local settings (per-machine)
 .claude/settings.local.json
