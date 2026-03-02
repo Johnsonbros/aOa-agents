@@ -266,6 +266,10 @@ Claude reads this and *knows* — the auth handler's login method, lines 15-45, 
 
 **The system learns what you're working on.** As you refactor code — not greenfield, *existing* code — aOa tracks your intent and ranks results by the code you've been touching. The top 10 results are usually all you need. Claude can dive into specific methods instead of reading entire files. That's one of the 12 patterns we save.
 
+We respect your `.gitignore`. We don't chase into build folders, `node_modules`, or other wasteful areas. Results are sorted by your intent, by recency, by how the system thinks you need them — all self-guided, all self-learning. Our results are typically fewer because we filter what doesn't matter, but every result hits harder.
+
+We track the hit rate. When Claude receives results, reads a file, and goes straight into a response — that's an **aOa-guided event**. We know the result landed. We measure it. That signal feeds back into the learner, making the next search even better.
+
 ---
 
 ## The Five Angles
