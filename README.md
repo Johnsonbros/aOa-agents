@@ -118,8 +118,11 @@ This is v1. The code flow graph — a subway map of how calls propagate through 
 
 The full dimensional breakdown. Languages, file distribution, grammar coverage, finding severity, pattern details. Your codebase health report — in seconds, not sprints.
 
+> [!WARNING]
+> **Top 1% of coders — want to know how this actually works?**
+
 <details>
-<summary><b>For the 1% — how the micro-embeddings model actually works</b></summary>
+<summary><b>Open the hood — the micro-embeddings model</b></summary>
 
 <br>
 
