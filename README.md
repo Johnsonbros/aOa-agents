@@ -34,29 +34,35 @@ A local dashboard running on localhost — real-time, private, yours. See exactl
 
 ## What aOa Actually Does
 
-Claude Code burns tokens. Every session, it rediscovers code it already found — re-reading files, following long grep tails, searching the same paths. We identified **10-12 distinct token waste patterns** and eliminated them.
+When Claude Code runs `grep`, the results can be massive — a bad query against a large codebase can return 200K+ tokens of matches. We don't know exactly how many results Claude actually reads (that's proprietary), but we know it's burning anywhere from 10K to 60K tokens *per search* chasing grep tails. We identified **12 distinct token waste patterns** and eliminated them.
 
-**aOa hijacks grep.** When Claude runs `grep`, aOa intercepts it and returns semantically aware results. Not just string matches — the results that *matter*, ranked by what Claude actually needs, delivered in the top 10-15 hits. No full-file reads. No chasing irrelevant matches through thousand-line files.
+**aOa hijacks grep.** When Claude runs `grep`, aOa intercepts it and returns something fundamentally different: **semantically compressed results**. Not just `file:line:content` — the full method signature, the parent class, the line range of the entire symbol, the semantic domain, and tags. All in O(1) time, faster than grep itself.
 
-**aOa hijacks Claude itself.** It injects learned context directly into the status line — guiding Claude to the right files before it even searches. The result: **95-99% token savings** on search-heavy tasks.
-
-**Where it shines:** Refactoring large codebases. Security reviews. Debugging across modules. Any task where Claude would normally spend minutes re-reading code it touched yesterday. This isn't for greenfield — it's for the work that grinds tokens into dust.
-
-**Without aOa:**
+**Standard grep returns this:**
 ```
-You: "Fix the auth bug"
-Claude: [17 tool calls, 4 minutes of searching, 17k tokens burned]
-Claude: "Found it. Line 47 in auth.py."
-```
-
-**With aOa:**
-```
-You: "Fix the auth bug"
-aOa: [Context injected: auth.py, session.py, middleware.py]
-Claude: "I see the issue. Line 47."
+services/auth/handler.py:15:    def login(self, user, password):
+services/auth/handler.py:47:    def logout(self, session_id):
+services/auth/middleware.py:62:    def get_user_from_token(self, token):
+tests/test_auth.py:15:    def test_login_success(self):
+tests/test_auth.py:37:    def test_login_invalid_password(self):
+...
+(hundreds more matches across the codebase)
 ```
 
-**150 tokens.** Same result.
+Claude sees flat text. No structure. No ranking. It has to read files to figure out what matters.
+
+**aOa returns this:**
+```
+services/auth/handler.py:AuthHandler.login(self, user, password)[15-45]:15  @authentication  #login #user
+services/api/router.py:Router.handle_login(self, request)[37-55]:37  @api  #login #request
+tests/test_auth.py:TestAuth.test_login_success(self)[15-35]:15  @testing  #login #test
+```
+
+Every result has the full signature (`AuthHandler.login`), the parent class, the exact line range (`[15-45]`), the semantic domain (`@authentication`), and tags. Claude reads this and *knows* — the auth handler's login method, lines 15-45, in the authentication domain. No file read needed. No follow-up searches.
+
+**The system learns what you're working on.** As you refactor code — not greenfield, *existing* code — aOa tracks your intent and ranks results by the code you've been touching. The top 10 results are usually all you need. Claude can dive into specific methods instead of reading entire files. That's one of the 12 patterns we save.
+
+**Where it shines:** Refactoring large codebases. Security reviews. Debugging across modules. Any task where Claude would normally spend minutes re-reading code it touched yesterday.
 
 ---
 
