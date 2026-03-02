@@ -19,7 +19,7 @@ No containers. No services. No runtime dependencies.
 It went through a clean-room rewrite -- not porting Python line by line,
 but rebuilding from behavioral specs and test fixtures. The result:
 100,000x faster autotune, 16-30x faster search, 8x less memory, and a
-single 4.9MB binary that handles 28 languages with structural parsing
+single ~9MB binary that supports 509 languages via tree-sitter grammars
 and 134 semantic domains embedded at compile time.
 
 We're not building through vibe coding or AI hype. We're taking real

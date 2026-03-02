@@ -33,17 +33,20 @@ These checks run in CI. They're standard Go ecosystem tools — nothing exotic. 
 | **govulncheck** | Scans our dependency tree for known CVEs. Uses call-graph analysis — only flags vulnerabilities in code we actually call. | Doesn't find zero-days or vulnerabilities in our own logic. |
 | **gosec** | Scans our source for common security patterns: hardcoded secrets, injection risks, weak crypto, unsafe file permissions (~34 rule categories). | Doesn't catch logic errors or novel attack patterns. |
 | **go vet** | Standard Go static analysis. Catches misuse of sync primitives, printf bugs, unreachable code. | Basic. Not a security tool per se. |
+| **CodeQL** | GitHub's semantic code analysis. Taint tracking, data flow analysis, and query-based vulnerability detection. Runs on every PR. | Doesn't cover Go-specific concurrency patterns as deeply as manual review. |
+| **Dependabot** | Monitors Go module dependencies for known CVEs. Opens PRs automatically when patches are available. | Only catches published vulnerabilities — not zero-days or logic bugs in dependencies. |
 | **Network audit** | Verifies zero outbound network patterns in production code: no `http.Client`, no `http.Get`, no `net.Dial` to external addresses. | Can't prove dependencies don't contain dormant network code. We audit those manually. |
 | **go version -m** | Every binary self-describes: Go version, all compiled-in dependencies with versions, exact git commit, build settings. You can inspect any release binary yourself. | Shows what's compiled in, not what it does at runtime. |
+| **npm provenance** | Every npm release is published with `--provenance` via GitHub's OIDC identity. Verifiable supply chain from source to package. | Proves *who* built it, not that the code itself is correct. |
 
-### What's not in CI yet but on the roadmap
+### Roadmap
 
 | Check | What it would add |
 |-------|------------------|
 | **SLSA Level 3 provenance** | Cryptographic proof that the binary was built from the stated source on an isolated builder. Verifiable by anyone. |
 | **cosign signing** | Keyless binary signing via GitHub's identity. Logged in a public transparency ledger. Proves the binary came from our CI, not a compromised machine. |
 
-We'll add these when we cut our first versioned release. They're real guarantees, not theater — but they require workflow restructuring that isn't worth doing until the release pipeline is stable.
+These are real guarantees, not theater. They require workflow restructuring that we'll implement as the release pipeline matures.
 
 ---
 
@@ -76,4 +79,4 @@ For those who want to verify the claims above, here's where to look:
 
 ## Reporting Security Issues
 
-If you find a security issue, please email us directly rather than opening a public issue. We'll respond within 48 hours and credit you in the fix.
+If you find a security issue, **do not open a public issue.** Use [GitHub's private vulnerability reporting](https://github.com/mvp-scale/aOa/security/advisories/new) to report it directly to us. We'll respond within 48 hours and credit you in the fix.
