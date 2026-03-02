@@ -48,13 +48,15 @@ But you want to know what's *really* going on.
 
 ---
 
-## The Problem With "Trust Me, It Saves Tokens"
+## The Problem No One Measures
 
-Everyone has a strategy. BMAD. Spec-driven development. Context management frameworks. They all claim to save tokens, help you move faster, stay in context longer.
+There's no shortage of methodologies for AI-assisted development. BMAD. Spec-driven. Test-driven. Context management frameworks. Prompt chaining. Memory systems. They all aim to help you write better code faster — and many of them do.
 
-But how do you know? How do you know if your strategy is actually working — or if it's costing you *more* tokens than it saves? How do you know if those elaborate prompt chains are helping or just burning runway?
+But none of them tell you what they cost.
 
-The truth is, a lot of it is smoke and mirrors. These methodologies help — we don't doubt that — but they might be costing you more tokens than simpler approaches. aOa takes a simple approach: learn your codebase, intercept searches, compress results, save tokens. And the proof isn't a claim. It's a dashboard.
+Are you spending 5x on tokens because your methodology front-loads context? 10x because your spec chain regenerates the same files every session? Is your context management strategy actually managing context, or is it just adding more of it? These are real questions with real dollar answers, and until now there was no way to measure it.
+
+aOa gives you the measurement. Every token in, every token out, every search, every file read — tracked, scored, and displayed. Compare session A (your methodology) to session B (a different approach) and find out which one actually wins. Not in theory. In tokens. In dollars. In time.
 
 ---
 
@@ -63,29 +65,6 @@ The truth is, a lot of it is smoke and mirrors. These methodologies help — we 
 aOa's dashboard gives you real-time visibility into what's actually happening. Every metric tells a story. Every number is something you can verify.
 
 Let's walk through it.
-
----
-
-### Arsenal
-
-<p align="center">
-  <img src="docs/screenshots/arsenal-hero.png" alt="aOa Arsenal hero metrics" width="700">
-</p>
-
-Your lifetime scorecard. Four numbers that tell you whether aOa is earning its keep.
-
-| Metric | The Story |
-|--------|-----------|
-| **Cost Avoidance** | Dollars not spent because aOa guided Claude to read targeted sections instead of entire files. The cumulative payoff of learning your codebase. |
-| **Sessions Extended** | Minutes of runway gained. Sessions that lasted longer because aOa reduced context burn. |
-| **Cache Savings** | Dollars saved by Anthropic's prompt cache — a second value stream working in parallel with guided reads. |
-| **Efficiency** | One grade across guided ratio, cache performance, and savings rate. How well aOa is optimizing your workflow over time. |
-
-<p align="center">
-  <img src="docs/screenshots/arsenal-main.png" alt="aOa Arsenal dashboard" width="700">
-</p>
-
-The full picture. Guided ratio across all sessions, unguided cost exposure, read velocity, session history. This is where you see the trend — are things getting better over time? They should be.
 
 ---
 
@@ -109,29 +88,6 @@ What's happening right now, this session.
 </p>
 
 The live activity feed. Context usage, burn rate, session cost, guided ratio, shadow savings — all updating in real-time. This is where you watch your strategy play out and decide if it's actually working.
-
----
-
-### Intel
-
-<p align="center">
-  <img src="docs/screenshots/intel-hero.png" alt="aOa Intel hero metrics" width="700">
-</p>
-
-What aOa has learned about your codebase.
-
-| Metric | The Story |
-|--------|-----------|
-| **Mastered** | Domains that earned core status through competitive displacement. These survived decay, outlasted rivals, and proved their relevance through repeated observation. |
-| **Learning Speed** | Domains discovered per prompt. Rising means active exploration. Flattening means the system is converging on a stable model of your project. |
-| **Signal Clarity** | What percentage of extracted terms resolve into real domains. Higher means vocabulary is crystallizing into structured knowledge, not noise. |
-| **Conversion** | The intelligence funnel: raw keywords in, structured domains out. How efficiently observation becomes understanding. |
-
-<p align="center">
-  <img src="docs/screenshots/intel-main.png" alt="aOa Intel dashboard" width="700">
-</p>
-
-The learning system in detail. Observed files, vocabulary size, concepts mapped, domain tiers, patterns extracted, evidence strength. This is the brain — watch it grow.
 
 ---
 
@@ -202,6 +158,29 @@ All bit operations are hardware-accelerated (`math/bits.OnesCount64`). The entir
 
 ---
 
+### Intel
+
+<p align="center">
+  <img src="docs/screenshots/intel-hero.png" alt="aOa Intel hero metrics" width="700">
+</p>
+
+What aOa has learned about your codebase.
+
+| Metric | The Story |
+|--------|-----------|
+| **Mastered** | Domains that earned core status through competitive displacement. These survived decay, outlasted rivals, and proved their relevance through repeated observation. |
+| **Learning Speed** | Domains discovered per prompt. Rising means active exploration. Flattening means the system is converging on a stable model of your project. |
+| **Signal Clarity** | What percentage of extracted terms resolve into real domains. Higher means vocabulary is crystallizing into structured knowledge, not noise. |
+| **Conversion** | The intelligence funnel: raw keywords in, structured domains out. How efficiently observation becomes understanding. |
+
+<p align="center">
+  <img src="docs/screenshots/intel-main.png" alt="aOa Intel dashboard" width="700">
+</p>
+
+The learning system in detail. Observed files, vocabulary size, concepts mapped, domain tiers, patterns extracted, evidence strength. This is the brain — watch it grow.
+
+---
+
 ### Debrief
 
 <p align="center">
@@ -222,6 +201,29 @@ The economics of your session.
 </p>
 
 The full conversation breakdown. Flow rate, pace, turn time, leverage, amplification, engine. See exactly what Claude saw, what it cost, and where the savings came from. This is where you compare session A to session B and find out which approach actually wins.
+
+---
+
+### Arsenal
+
+<p align="center">
+  <img src="docs/screenshots/arsenal-hero.png" alt="aOa Arsenal hero metrics" width="700">
+</p>
+
+Your lifetime scorecard. Four numbers that tell you whether aOa is earning its keep.
+
+| Metric | The Story |
+|--------|-----------|
+| **Cost Avoidance** | Dollars not spent because aOa guided Claude to read targeted sections instead of entire files. The cumulative payoff of learning your codebase. |
+| **Sessions Extended** | Minutes of runway gained. Sessions that lasted longer because aOa reduced context burn. |
+| **Cache Savings** | Dollars saved by Anthropic's prompt cache — a second value stream working in parallel with guided reads. |
+| **Efficiency** | One grade across guided ratio, cache performance, and savings rate. How well aOa is optimizing your workflow over time. |
+
+<p align="center">
+  <img src="docs/screenshots/arsenal-main.png" alt="aOa Arsenal dashboard" width="700">
+</p>
+
+The full picture. Guided ratio across all sessions, unguided cost exposure, read velocity, session history. This is where you see the trend — are things getting better over time? They should be.
 
 ---
 
