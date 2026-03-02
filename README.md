@@ -1,4 +1,4 @@
-# aOa — Angle of Attack
+# aOa — Angle O(1)f Attack
 
 > **Five angles. One attack. One binary.**
 >
@@ -6,35 +6,228 @@
 
 ---
 
-## Two Commands, You're In
+## Install
 
-```bash
-npx @mvpscale/aoa init --update
-```
-
-That's it. aOa detects your languages, installs grammars, and starts learning. Have Claude Code use it and you're already saving tokens.
-
-Don't want npx? Install the binary directly:
-
+**Option A — Global install** (requires root/sudo, adds `aoa` to your PATH):
 ```bash
 npm install -g @mvpscale/aoa
+aoa init
 ```
+
+**Option B — No root needed** (use `npx` to run):
+```bash
+npm install @mvpscale/aoa init
+npx aoa init
+
+```
+
+**Pro tip:** Run the entire download, install, and init process in one shot:
+```bash
+npx aoa init --update
+```
+
+That's it. aOa detects your languages, installs grammars, and starts learning. Have Claude Code use it and you're already saving tokens. aOa is project-scoped — everything lives in your project folder. Run `aoa init` in as many projects as you want.
 
 ---
 
-## What You Get
+## What You Get First: The Status Line
+
+The moment aOa is running, you get a status line inside Claude Code:
 
 <p align="center">
-  <img src="docs/screenshots/arsenal-hero.png" alt="aOa Arsenal — 98% token savings" width="700">
+  <img src="docs/screenshots/status-line.png" alt="aOa status line in Claude Code" width="700">
 </p>
 
-A local dashboard running on localhost — real-time, private, yours. See exactly what aOa is doing: token savings, search patterns, learned domains, activity feed. Nothing leaves your machine.
+Prompt count, tokens saved, time saved, context usage — all at a glance, updated on every state change.
+
+Fully configurable. Everything you'll see in the dashboards below — tokens saved, burn rate, domains mastered, cost per exchange, context runway — can be surfaced right here in the status line. 25 segments across Live, Intel, Debrief, and Runway categories. Edit `.aoa/status-line.conf`, save, done.
+
+**You could stop here.** aOa is already saving you tokens, already learning your codebase. You're done.
+
+But you want to know what's *really* going on.
+
+---
+
+## The Problem With "Trust Me, It Saves Tokens"
+
+Everyone has a strategy. BMAD. Spec-driven development. Context management frameworks. They all claim to save tokens, help you move faster, stay in context longer.
+
+But how do you know? How do you know if your strategy is actually working — or if it's costing you *more* tokens than it saves? How do you know if those elaborate prompt chains are helping or just burning runway?
+
+The truth is, a lot of it is smoke and mirrors. These methodologies help — we don't doubt that — but they might be costing you more tokens than simpler approaches. aOa takes a simple approach: learn your codebase, intercept searches, compress results, save tokens. And the proof isn't a claim. It's a dashboard.
+
+---
+
+## Behind the Veil
+
+aOa's dashboard gives you real-time visibility into what's actually happening. Every metric tells a story. Every number is something you can verify.
+
+Let's walk through it.
+
+---
+
+### Arsenal
+
+<p align="center">
+  <img src="docs/screenshots/arsenal-hero.png" alt="aOa Arsenal hero metrics" width="700">
+</p>
+
+Your lifetime scorecard. Four numbers that tell you whether aOa is earning its keep.
+
+| Metric | The Story |
+|--------|-----------|
+| **Cost Avoidance** | Dollars not spent because aOa guided Claude to read targeted sections instead of entire files. The cumulative payoff of learning your codebase. |
+| **Sessions Extended** | Minutes of runway gained. Sessions that lasted longer because aOa reduced context burn. |
+| **Cache Savings** | Dollars saved by Anthropic's prompt cache — a second value stream working in parallel with guided reads. |
+| **Efficiency** | One grade across guided ratio, cache performance, and savings rate. How well aOa is optimizing your workflow over time. |
+
+<p align="center">
+  <img src="docs/screenshots/arsenal-main.png" alt="aOa Arsenal dashboard" width="700">
+</p>
+
+The full picture. Guided ratio across all sessions, unguided cost exposure, read velocity, session history. This is where you see the trend — are things getting better over time? They should be.
+
+---
+
+### Live
+
+<p align="center">
+  <img src="docs/screenshots/live-hero.png" alt="aOa Live hero metrics" width="700">
+</p>
+
+What's happening right now, this session.
+
+| Metric | The Story |
+|--------|-----------|
+| **Tokens Saved** | Every token saved is a token that didn't consume your context window — keeping your session alive longer. |
+| **Est. Cost Saved** | Tokens converted to dollars at current API rates. Money that stayed in your pocket. |
+| **Time Saved** | Wall-clock time you didn't spend waiting. Based on median token generation speed. |
+| **Learning** | Progress toward the next autotune cycle. Every 50 prompts, aOa recalibrates its understanding of your project. |
+
+<p align="center">
+  <img src="docs/screenshots/live-main.png" alt="aOa Live dashboard" width="700">
+</p>
+
+The live activity feed. Context usage, burn rate, session cost, guided ratio, shadow savings — all updating in real-time. This is where you watch your strategy play out and decide if it's actually working.
+
+---
+
+### Intel
+
+<p align="center">
+  <img src="docs/screenshots/intel-hero.png" alt="aOa Intel hero metrics" width="700">
+</p>
+
+What aOa has learned about your codebase.
+
+| Metric | The Story |
+|--------|-----------|
+| **Mastered** | Domains that earned core status through competitive displacement. These survived decay, outlasted rivals, and proved their relevance through repeated observation. |
+| **Learning Speed** | Domains discovered per prompt. Rising means active exploration. Flattening means the system is converging on a stable model of your project. |
+| **Signal Clarity** | What percentage of extracted terms resolve into real domains. Higher means vocabulary is crystallizing into structured knowledge, not noise. |
+| **Conversion** | The intelligence funnel: raw keywords in, structured domains out. How efficiently observation becomes understanding. |
+
+<p align="center">
+  <img src="docs/screenshots/intel-main.png" alt="aOa Intel dashboard" width="700">
+</p>
+
+The learning system in detail. Observed files, vocabulary size, concepts mapped, domain tiers, patterns extracted, evidence strength. This is the brain — watch it grow.
+
+---
+
+### Recon — Dimensional Analysis
+
+Static analysis platforms charge tens of thousands per month — and they make you pay per language, per codebase, per scan, per seat. We built a single funnel into an 8MB binary. 500+ languages. No scan limits. No subscriptions. Run it on everything, all the time.
+
+Recon uses tree-sitter to parse your code into an abstract syntax tree — a structural map of every function, class, and call in your codebase — then runs it through a proprietary 1-bit micro-embeddings model across five dimensions — Security, Performance, Quality, Observability, and Architecture. Each dimension asks up to 64 independent questions of every method in your codebase. When we flag something like injection, it's not a single pattern match — it's dozens of questions converging across every line of every method, looking for a digital signature. Micro-embeddings, Aho-Corasick text matching, AST structural analysis, and abstract roll-up scoring all run together at O(1) bit speed. 180+ rules. Five dimensions. Every file, every language, <1ms — this is the way.
+
+Is it perfect? No — we're still human, and some detections may be inaccurate. But it's fast, it's comprehensive, and if something looks wrong you flag it for follow-up and keep moving. Find a pattern problem, send it straight to Claude or any CLI tool. That's the workflow.
+
+This is v1. The code flow graph — a subway map of how calls propagate through your codebase — is on the roadmap. That doesn't exist yet in a local binary. It will.
+
+<p align="center">
+  <img src="docs/screenshots/recon-hero.png" alt="aOa Recon hero metrics" width="700">
+</p>
+
+| Metric | The Story |
+|--------|-----------|
+| **Files Scanned** | How many source files the analysis covered. Broader coverage means a more trustworthy posture. |
+| **Findings** | Total issues across all dimensions and severity levels. Each one is a concrete improvement opportunity. |
+| **Critical** | High-severity findings that need attention now — security, reliability, correctness. Address these first. |
+| **Clean File %** | Files with zero findings. The positive side of the story — higher means a healthier codebase. |
+
+<p align="center">
+  <img src="docs/screenshots/recon-main.png" alt="aOa Recon dashboard" width="700">
+</p>
+
+The full dimensional breakdown. Languages, file distribution, grammar coverage, finding severity, pattern details. Your codebase health report — in seconds, not sprints.
+
+<details>
+<summary><b>For the 1% — how the micro-embeddings model actually works</b></summary>
+
+<br>
+
+The entire model is six `uint64` values — 48 bytes. That's it.
+
+```
+type Bitmask [6]uint64    // 6 tiers × 64 bits = 384 dimensions
+```
+
+Each tier covers a domain: **Security**, **Performance**, **Quality**, **Observability**, **Architecture**, and a reserved slot. Each bit position is a specific yes/no question — "is there a hardcoded secret on this line?", "is this a defer inside a loop?", "does this domain layer import an adapter?" ~180 rules across 5 active tiers.
+
+**Three detection layers run per file:**
+
+1. **Text patterns** — Aho-Corasick automaton, single-pass O(n). Finds candidates like `exec.Command(`, `SELECT`, `password =`.
+2. **Structural** — tree-sitter AST walk. 509 grammars collapse into 15 universal concepts (`call`, `assignment`, `for_loop`, `function`...). A rule like "SQL concatenation inside a query call" works unchanged across Go, Python, Java, Rust — all 509 languages.
+3. **Regex confirmation** — per-line regex on candidates to cut false positives. Pattern like `AKIA[0-9A-Z]{16}` confirms an AWS key isn't just the word "key."
+
+For composite rules, all layers must agree within ±3 lines. Text finds the candidate, structure confirms the context, regex validates the format.
+
+**Per-method scoring:**
+
+```
+score = base + co_occurrence + clustering + breadth
+```
+
+- **Base**: each fired bit contributes by severity — critical (10), high (7), warning (3), info (1) — modulated by *density* (what fraction of the method's lines trigger this bit). A single `info` hit in a 500-line method scores ~0.01. That same pattern on 20% of lines is a real signal.
+- **Co-occurrence** (+2.0): two bits firing on the *same line* — SQL concat + raw query call = compound finding, not two separate observations.
+- **Clustering** (+1.0 per unique bit): findings within ±2 lines of each other form a cluster. Adjacent problems are related problems.
+- **Breadth** (+1.0 per warning bit beyond 2): many distinct findings in one method = systematic debt.
+
+**Gate: score ≥ 3 surfaces. Below 3 is noise.** One critical hit clears the gate instantly (score = 10). Scattered low-severity findings in large methods stay suppressed. Dense compound patterns in small methods surface.
+
+All bit operations are hardware-accelerated (`math/bits.OnesCount64`). The entire file analysis pipeline runs in 10-30ms. No neural networks. No embeddings server. No API calls. Just bit math.
+
+</details>
+
+---
+
+### Debrief
+
+<p align="center">
+  <img src="docs/screenshots/debrief-hero.png" alt="aOa Debrief hero metrics" width="700">
+</p>
+
+The economics of your session.
+
+| Metric | The Story |
+|--------|-----------|
+| **Input** | Everything you fed Claude — prompts, file contents, tool results. Each token counts against your context window and your bill. |
+| **Output** | Everything Claude produced — code, explanations, tool calls, thinking. The work product of your session. |
+| **Cache Saved** | Dollars you didn't spend because Anthropic's prompt cache served repeated context at a fraction of the price. |
+| **Cost/Exchange** | Average dollars per back-and-forth. Your unit price — useful for budgeting and comparing strategies. |
+
+<p align="center">
+  <img src="docs/screenshots/debrief-main.png" alt="aOa Debrief dashboard" width="700">
+</p>
+
+The full conversation breakdown. Flow rate, pace, turn time, leverage, amplification, engine. See exactly what Claude saw, what it cost, and where the savings came from. This is where you compare session A to session B and find out which approach actually wins.
 
 ---
 
 ## What aOa Actually Does
 
-When Claude Code runs `grep`, the results can be massive — a bad query against a large codebase can return 200K+ tokens of matches. We don't know exactly how many results Claude actually reads (that's proprietary), but we know it's burning anywhere from 10K to 60K tokens *per search* chasing grep tails. We identified **12 distinct token waste patterns** and eliminated them.
+When Claude Code runs `grep`, the results can be massive — a bad query against a large codebase can return 200K+ tokens of matches. We don't know exactly how many results Claude reads (that's proprietary), but we know it's burning anywhere from 10K to 60K tokens *per search* chasing grep tails. We identified **12 distinct token waste patterns** and eliminated them.
 
 **aOa hijacks grep.** When Claude runs `grep`, aOa intercepts it and returns something fundamentally different: **semantically compressed results**. Not just `file:line:content` — the full method signature, the parent class, the line range of the entire symbol, the semantic domain, and tags. All in O(1) time, faster than grep itself.
 
@@ -62,89 +255,6 @@ Every result has the full signature (`AuthHandler.login`), the parent class, the
 
 **The system learns what you're working on.** As you refactor code — not greenfield, *existing* code — aOa tracks your intent and ranks results by the code you've been touching. The top 10 results are usually all you need. Claude can dive into specific methods instead of reading entire files. That's one of the 12 patterns we save.
 
-**Where it shines:** Refactoring large codebases. Security reviews. Debugging across modules. Any task where Claude would normally spend minutes re-reading code it touched yesterday.
-
----
-
-## Behind the Veil
-
-aOa's dashboard gives you real-time visibility into what Claude is doing — and what aOa is learning. Every metric has a story. Hover any card in the dashboard for the full explanation.
-
-### Arsenal — Lifetime Performance
-
-<p align="center">
-  <img src="docs/screenshots/arsenal-main.png" alt="aOa Arsenal dashboard" width="700">
-</p>
-
-Your command center across all sessions.
-
-| Metric | What It Tells You |
-|--------|-------------------|
-| **Cost Avoidance** | Lifetime dollars not spent because aOa guided Claude to read targeted file sections instead of entire files. The cumulative payoff of learning your codebase. |
-| **Sessions Extended** | Extra minutes of runway gained across all sessions. Time reclaimed by reducing context burn — sessions that lasted longer because aOa was working. |
-| **Cache Savings** | Lifetime dollars saved by Anthropic's prompt cache. A second value stream independent of guided reads — two mechanisms saving you money in parallel. |
-| **Efficiency** | Composite score across guided ratio, cache performance, and savings rate. A single grade for how well aOa is optimizing your workflow over time. |
-
-### Live — Angle of Attack
-
-<p align="center">
-  <img src="docs/screenshots/live-main.png" alt="aOa Live dashboard" width="700">
-</p>
-
-Real-time view of the current session. What's happening right now.
-
-| Metric | What It Tells You |
-|--------|-------------------|
-| **Tokens Saved** | Every token saved is a token that didn't consume your context window — keeping your session alive longer. |
-| **Est. Cost Saved** | Tokens saved converted to dollars at current API rates. Money that stayed in your pocket. |
-| **Time Saved** | Wall-clock time you didn't spend waiting. Based on median token generation speed. |
-| **Learning** | Autotune progress toward the next learning cycle. Every 50 prompts, aOa recalibrates its understanding of your project. |
-
-### Intel — Learning System
-
-<p align="center">
-  <img src="docs/screenshots/intel-main.png" alt="aOa Intel dashboard" width="700">
-</p>
-
-What aOa has learned about your codebase. Semantic domains, confidence tiers, competitive displacement in action.
-
-| Metric | What It Tells You |
-|--------|-------------------|
-| **Mastered** | Domains that earned core status through competitive displacement — areas where aOa's understanding is deepest. These survived decay, outlasted rivals, and proved their relevance. |
-| **Learning Speed** | How fast aOa is building new understanding. Domains discovered per prompt — rising means active exploration, flattening means the system is converging. |
-| **Signal Clarity** | What percentage of extracted terms resolve into real domains. Higher means the signal chain is clean — vocabulary is crystallizing into structured knowledge, not noise. |
-| **Conversion** | The intelligence funnel: raw keywords in, structured domains out. Shows how efficiently observation becomes understanding. |
-
-### Recon — Dimensional Analysis
-
-<p align="center">
-  <img src="docs/screenshots/recon-main.png" alt="aOa Recon dashboard" width="700">
-</p>
-
-Structural analysis of your codebase across multiple dimensions.
-
-| Metric | What It Tells You |
-|--------|-------------------|
-| **Files Scanned** | How many source files the dimensional analysis covered. More files scanned means broader coverage and a more trustworthy posture. |
-| **Findings** | Total issues discovered across all dimensions and severity levels. Each finding is a concrete improvement opportunity. |
-| **Critical** | High-severity findings that need attention now. These could affect security, reliability, or correctness — address these first. |
-| **Clean File %** | Percentage of scanned files with zero findings. The positive side of the story — higher means a healthier codebase. |
-
-### Debrief — Session Breakdown
-
-<p align="center">
-  <img src="docs/screenshots/debrief-main.png" alt="aOa Debrief dashboard" width="700">
-</p>
-
-The full conversation breakdown. See exactly what Claude saw, what it cost, and where the savings came from.
-
-| Metric | What It Tells You |
-|--------|-------------------|
-| **Input** | Everything you fed Claude this session — prompts, file contents, tool results. Each input token counts against your context window and your bill. |
-| **Output** | Everything Claude produced — code, explanations, tool calls, thinking. The work product of your session. |
-| **Cache Saved** | Dollars you didn't spend because Anthropic's prompt cache served repeated context at a fraction of the price. Free efficiency. |
-| **Cost/Exchange** | Average dollars per back-and-forth with Claude. Your unit price — useful for budgeting and comparing session efficiency. |
-
 ---
 
 ## The Five Angles
@@ -165,11 +275,23 @@ All angles converge into **one confident answer**.
 
 aOa gets smarter every session. No configuration. No training. Just use it.
 
-1. **observe()** — Every search and tool call generates signals (keywords, terms, domains, file hits)
-2. **autotune** — Every 50 prompts, a 21-step optimization runs: decay old signals, deduplicate, rank domains, promote/demote, prune noise
-3. **competitive displacement** — Top 24 domains stay in core, others compete for relevance. Domains that stop appearing naturally fade out.
+It learns from *everything*:
 
-All learning happens locally. No network calls. No AI calls for classification. State persists across sessions automatically.
+- **Your prompts** — every question you ask Claude generates word pairs (bigrams) that reveal how you think about your project
+- **Claude's thinking** — internal reasoning text gets mined for the same patterns
+- **Claude's responses** — code explanations, answers, suggestions — all feed the signal chain
+- **Every grep** — search patterns get tokenized into keywords, resolved into semantic terms, mapped to domains
+- **Every file read** — which files Claude touches, how often, and whether aOa guided it there
+- **Search results** — the top hits from every search feed back domains, terms, and content patterns
+- **Tool calls** — reads, writes, edits, bash commands — all tracked, all scored
+
+All of these signals converge into the learner:
+
+1. **observe()** — Keywords, terms, domains, file hits, and co-occurrence pairs accumulate with every interaction
+2. **autotune** — Every 50 prompts, a 21-step optimization runs: decay old signals, deduplicate, rank domains, promote/demote, prune noise
+3. **competitive displacement** — Top 24 domains stay in core, others compete for relevance. Domains that stop appearing naturally fade out
+
+No network calls. No AI calls for classification. State persists across sessions automatically.
 
 ---
 
@@ -227,28 +349,128 @@ Exit codes, output format, context separators, binary detection, multi-file pref
 
 ---
 
-## Language Support
+## Language Support — 509 Languages
 
-**28 languages** with full tree-sitter structural parsing (function/class/method extraction):
+aOa ships with **509 tree-sitter grammars** compiled into the binary. 106 file extensions mapped. Languages are organized into four priority tiers — all validated, all production-ready.
 
-Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Kotlin, Scala, Swift, Bash, Lua, Haskell, OCaml, Zig, CUDA, Verilog, HTML, CSS, Svelte, JSON, YAML, TOML, HCL
+**P1 — Core** (11 languages, compiled-in, always available):
 
-**29 additional languages** with tokenization-based indexing. **101 file extensions** mapped total.
+> Bash, C, C++, Go, Java, JavaScript, JSON, Python, Rust, TSX, TypeScript
 
----
+**P2 — Common** (11 languages):
 
-## Status Line
+> C#, CSS, Dockerfile, HTML, Kotlin, Markdown, PHP, Ruby, SQL, TOML, YAML
 
-aOa generates a status line that shows your session at a glance:
+**P3 — Extended** (19 languages):
 
-| Stage | Status Line |
-|-------|-------------|
-| Learning | `aOa 5 \| calibrating...` |
-| Predicting | `aOa 35 \| 2k saved \| ctx:15k/200k (8%)` |
-| Confident | `aOa 69 \| 80k saved \| ctx:36k/200k (18%)` |
-| Long session | `aOa 247 \| 1.8M saved \| ctx:142k/200k (71%)` |
+> Clojure, CMake, Dart, Elixir, Erlang, Gleam, GraphQL, Groovy, HCL, Lua, Make, Nix, R, Scala, Svelte, Swift, Vue, and more
 
-Written to `.aoa/status.json` on every state change.
+**P4 — Specialist** (20 languages):
+
+> Ada, CUDA, D, Elm, Fennel, Fortran, GLSL, Haskell, HLSL, Julia, Nim, Objective-C, OCaml, Odin, PureScript, Verilog, VHDL, Zig, and more
+
+Every language gets full structural parsing — functions, classes, methods, symbols, all extractable. No per-language subscriptions. No scan limits. One binary.
+
+<details>
+<summary><b>All 509 languages — find yours</b></summary>
+
+<br>
+
+**Systems & Low-Level**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| C | C++ | Rust | Go |
+| Zig | D | Odin | Nim |
+| Ada | Fortran | Pascal | Carbon |
+| Crystal | Hare | V | CUDA |
+| Assembly | NASM | M68K | MIPS |
+| LLVM | MLIR | Linkerscript | ISPC |
+
+**Application & Enterprise**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| Java | Kotlin | Scala | C# |
+| Swift | Objective-C | Dart | PHP |
+| Ruby | Python | Perl | COBOL |
+| ABAP | ABL | Apex | Groovy |
+| Haxe | Magik | Eiffel | Simula |
+
+**Web & Frontend**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| JavaScript | TypeScript | TSX | HTML |
+| CSS | SCSS | Svelte | Vue |
+| Astro | Angular | Pug | Slim |
+| Haml | Blade | Twig | Mustache |
+| Liquid | Jinja | HTMX | Glimmer |
+
+**Functional & Academic**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| Haskell | OCaml | F# | Elm |
+| PureScript | Clojure | Elixir | Erlang |
+| Gleam | Racket | Scheme | Common Lisp |
+| SML | Agda | Idris | Unison |
+| Roc | Koka | Factor | Forth |
+
+**Scripting & Shell**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| Bash | Fish | Elvish | Nu |
+| PowerShell | AWK | Tcl | Lua |
+| Luau | Julia | R | GDScript |
+| Starlark | Fennel | Janet | Moonscript |
+
+**Data, Config & Markup**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| JSON | JSONC | JSON5 | YAML |
+| TOML | XML | CSV | TSV |
+| INI | Dotenv | KDL | HOCON |
+| HCL | Nix | CUE | Dhall |
+| Markdown | LaTeX | Typst | AsciiDoc |
+| GraphQL | Protobuf | Thrift | Cap'n Proto |
+
+**DevOps & Infrastructure**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| Dockerfile | Earthfile | Nginx | Caddy |
+| CMake | Make | Meson | Ninja |
+| Bitbake | Just | Helm | Bicep |
+
+**Database & Query**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| SQL | SQLite | BigQuery SQL | SOQL |
+| SOSL | PromQL | SurrealQL | Kusto |
+| Prisma | DBML | Rego | CQL |
+
+**Hardware & EDA**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| Verilog | SystemVerilog | VHDL | GLSL |
+| HLSL | WGSL | Bluespec | FIRRTL |
+| PIO ASM | Devicetree | T32 | Tablegen |
+
+**Blockchain & Smart Contracts**
+
+| Language | Language | Language | Language |
+|----------|----------|----------|----------|
+| Solidity | Cairo | Move | Clarity |
+| Tact | Leo | Circom | Aiken |
+
+**And 200+ more** — DSLs, game engines (GDScript, GDShader), music (LilyPond), proof assistants (Agda, Lean), config formats, template languages, and everything in between. If tree-sitter parses it, aOa understands it.
+
+</details>
 
 ---
 
@@ -263,17 +485,11 @@ Written to `.aoa/status.json` on every state change.
 
 ## Uninstall
 
-**Remove from a project:**
 ```bash
-aoa wipe --force
+aoa remove
 ```
 
-**Remove the binary:**
-```bash
-rm $(which aoa)
-```
-
-Nothing else to clean up. No containers. No services. No config files scattered across your system.
+Or just delete the `.aoa/` folder from your project. That's all there is. Nothing else on your system.
 
 ---
 
