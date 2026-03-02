@@ -38,7 +38,7 @@ The moment aOa is running, you get a status line inside Claude Code:
   <img src="docs/screenshots/status-line.png" alt="aOa status line in Claude Code" width="700">
 </p>
 
-Prompt count, tokens saved, time saved, context usage — all at a glance, updated on every state change.
+That's a real session — over 100 million tokens saved across roughly a week of work. The time range (62h-156h) is a range because we're honest: you can't precisely measure time saved. We calculate it based on measurable token savings alone — not on faster result ranking, not on fewer follow-up searches, not on any of the other ways aOa speeds things up. Those are real but not quantifiable, so we don't claim them. What you see is what we can prove.
 
 Fully configurable. Everything you'll see in the dashboards below — tokens saved, burn rate, domains mastered, cost per exchange, context runway — can be surfaced right here in the status line. 25 segments across Live, Intel, Debrief, and Runway categories. Edit `.aoa/status-line.conf`, save, done.
 
