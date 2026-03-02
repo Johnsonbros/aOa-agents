@@ -4,6 +4,7 @@
 package fsnotify
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,47 @@ var ignoreDirs = map[string]bool{
 	".aoa":           true,
 	".next":          true,
 	"target":         true,
+}
+
+// gitignoreDirs are additional directories parsed from .gitignore at startup.
+var gitignoreDirs map[string]bool
+
+func init() {
+	gitignoreDirs = make(map[string]bool)
+}
+
+// loadGitignore reads .gitignore from projectRoot and adds directory patterns
+// to the ignore list. This prevents watching thousands of non-code directories.
+func loadGitignore(projectRoot string) {
+	f, err := os.Open(filepath.Join(projectRoot, ".gitignore"))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Strip trailing slash for directory patterns
+		dir := strings.TrimSuffix(line, "/")
+		// Skip negation patterns and glob patterns with wildcards
+		if strings.HasPrefix(dir, "!") || strings.Contains(dir, "*") {
+			continue
+		}
+		// Skip patterns with path separators (not simple dir names)
+		if strings.Contains(dir, "/") {
+			// But handle top-level dir references like "memory/"
+			dir = strings.TrimPrefix(dir, "/")
+			if !strings.Contains(dir, "/") {
+				gitignoreDirs[dir] = true
+			}
+			continue
+		}
+		gitignoreDirs[dir] = true
+	}
 }
 
 // File extensions/suffixes to ignore.
@@ -68,6 +110,9 @@ func (w *Watcher) Watch(projectPath string, onChange func(filePath string)) erro
 	if err != nil {
 		return err
 	}
+
+	// Load .gitignore patterns to avoid watching non-code directories
+	loadGitignore(absPath)
 
 	// Walk and add all directories
 	err = filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
@@ -187,7 +232,7 @@ func (w *Watcher) isAllowed(path string) bool {
 
 // shouldIgnoreDir returns true if the directory name should be skipped.
 func shouldIgnoreDir(name string) bool {
-	return ignoreDirs[name]
+	return ignoreDirs[name] || gitignoreDirs[name]
 }
 
 // shouldIgnorePath returns true if the file path should not trigger onChange.
