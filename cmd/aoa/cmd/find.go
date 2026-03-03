@@ -20,13 +20,17 @@ func runFind(cmd *cobra.Command, args []string) error {
 	sockPath := socket.SocketPath(root)
 	client := socket.NewClient(sockPath)
 
-	if !client.Ping() {
-		return fmt.Errorf("daemon not running. Start with: aoa daemon start")
-	}
-
 	result, err := client.Files(args[0], "")
 	if err != nil {
-		return err
+		if !isConnectError(err) {
+			return err
+		}
+		// Daemon not running — fall back to filesystem glob.
+		matches := fallbackFindGlob(root, args[0])
+		for _, m := range matches {
+			fmt.Println(m)
+		}
+		return nil
 	}
 
 	fmt.Print(formatFiles(result))

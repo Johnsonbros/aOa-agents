@@ -1048,8 +1048,7 @@ func TestNoDaemon_AllCommands(t *testing.T) {
 	}{
 		{"grep", []string{"grep", "test"}},
 		{"egrep", []string{"egrep", "test"}},
-		{"find", []string{"find", "*.go"}},
-		{"locate", []string{"locate", "main"}},
+		// find and locate now fall back to filesystem — tested in TestFind_NoDaemon_Fallback / TestLocate_NoDaemon_Fallback
 		{"open", []string{"open"}},
 	}
 
@@ -1689,5 +1688,90 @@ func TestRemove_ClaudeMD_OnlyAOa(t *testing.T) {
 	// CLAUDE.md should be deleted (it was only our guidance)
 	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Error("CLAUDE.md should be deleted when it only contained aOa guidance")
+	}
+}
+
+// =============================================================================
+// Find/Locate fallback tests (no daemon)
+// =============================================================================
+
+func TestFind_NoDaemon_Fallback(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n")
+	writeFile(t, filepath.Join(dir, "lib", "util.go"), "package lib\n")
+
+	stdout, _, exitCode := runAOA(t, dir, "find", "*.go")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "main.go") {
+		t.Error("expected main.go in output")
+	}
+	if !strings.Contains(stdout, filepath.Join("lib", "util.go")) {
+		t.Error("expected lib/util.go in output")
+	}
+}
+
+func TestFind_Fallback_IgnoresDirs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "app.go"), "package main\n")
+	writeFile(t, filepath.Join(dir, "node_modules", "dep", "index.js"), "module.exports = {}\n")
+	writeFile(t, filepath.Join(dir, ".git", "config"), "[core]\n")
+
+	stdout, _, _ := runAOA(t, dir, "find", "*")
+	if strings.Contains(stdout, "node_modules") {
+		t.Error("find fallback should skip node_modules")
+	}
+	if strings.Contains(stdout, ".git") {
+		t.Error("find fallback should skip .git")
+	}
+	if !strings.Contains(stdout, "app.go") {
+		t.Error("find fallback should include app.go")
+	}
+}
+
+func TestLocate_NoDaemon_Fallback(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "server.go"), "package main\n")
+	writeFile(t, filepath.Join(dir, "src", "server_test.go"), "package src\n")
+
+	stdout, _, exitCode := runAOA(t, dir, "locate", "server")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "server.go") {
+		t.Error("expected server.go in output")
+	}
+	if !strings.Contains(stdout, "server_test.go") {
+		t.Error("expected server_test.go in output")
+	}
+}
+
+func TestPeek_NoDaemon_Error(t *testing.T) {
+	dir := t.TempDir()
+	_, stderr, exitCode := runAOA(t, dir, "peek", "abcd")
+	if exitCode == 0 {
+		t.Fatal("expected non-zero exit for peek without daemon")
+	}
+	if !strings.Contains(stderr, "daemon not running") {
+		t.Errorf("expected daemon-not-running message, got: %s", stderr)
+	}
+}
+
+func TestTree_NoDaemon(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n")
+	os.MkdirAll(filepath.Join(dir, "pkg"), 0755)
+	writeFile(t, filepath.Join(dir, "pkg", "lib.go"), "package pkg\n")
+
+	stdout, _, exitCode := runAOA(t, dir, "tree")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "main.go") {
+		t.Error("expected main.go in tree output")
+	}
+	if !strings.Contains(stdout, "pkg") {
+		t.Error("expected pkg/ in tree output")
 	}
 }

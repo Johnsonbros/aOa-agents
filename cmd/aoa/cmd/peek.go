@@ -26,6 +26,11 @@ func runPeek(cmd *cobra.Command, args []string) error {
 
 	result, err := client.Peek(args)
 	if err != nil {
+		if isConnectError(err) {
+			fmt.Fprintln(os.Stderr, "peek: daemon not running — peek codes require a running daemon.")
+			fmt.Fprintln(os.Stderr, "  Start with: aoa daemon start")
+			return err
+		}
 		fmt.Fprintf(os.Stderr, "peek: %v\n", err)
 		return err
 	}
