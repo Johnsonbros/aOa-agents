@@ -214,7 +214,7 @@ func runDaemonLoop(root, sockPath string) error {
 	logf("daemon starting — %d rules%s", a.RuleCount(), dashURL)
 
 	// Warm caches in the background — daemon is already serving.
-	go func() {
+	a.SafeGo("warm-caches", func() {
 		r := a.WarmCaches(func(msg string) { logf("%s", msg) })
 		// Format summary from WarmResult
 		reconPart := ""
@@ -227,7 +227,7 @@ func runDaemonLoop(root, sockPath string) error {
 		}
 		logf("ready (%.1fs) — %d files, %d tokens, index %.1fs, files %.1fs%s",
 			r.TotalTime, r.FileCount, r.TokenCount, r.IndexTime, r.CacheTime, reconPart)
-	}()
+	})
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

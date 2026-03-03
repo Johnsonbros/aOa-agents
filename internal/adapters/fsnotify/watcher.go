@@ -43,6 +43,7 @@ var ignoreFiles = map[string]bool{
 type Watcher struct {
 	fw         *fsnotify.Watcher
 	done       chan struct{}
+	wg         sync.WaitGroup // tracks the event loop goroutine
 	stopped    bool
 	mu         sync.Mutex
 	allowPaths map[string]bool // paths exempt from ignore rules
@@ -91,7 +92,9 @@ func (w *Watcher) Watch(projectPath string, onChange func(filePath string)) erro
 	var dmu sync.Mutex
 	const debounceInterval = 50 * time.Millisecond
 
+	w.wg.Add(1)
 	go func() {
+		defer w.wg.Done()
 		for {
 			select {
 			case event, ok := <-w.fw.Events:
@@ -170,7 +173,9 @@ func (w *Watcher) Stop() error {
 	}
 	w.stopped = true
 	close(w.done)
-	return w.fw.Close()
+	err := w.fw.Close()
+	w.wg.Wait() // block until event loop goroutine exits
+	return err
 }
 
 // isAllowed returns true if the path is under an explicitly allowed directory.

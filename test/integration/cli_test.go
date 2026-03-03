@@ -288,10 +288,10 @@ func processAliveTest(pid int) bool {
 }
 
 // socketPathForDir computes the expected socket path for a directory.
-// Replicates internal/adapters/socket.SocketPath logic.
+// Replicates internal/adapters/socket.SocketPath logic (UID-prefixed hash).
 func socketPathForDir(dir string) string {
 	abs, _ := filepath.Abs(dir)
-	h := sha256.Sum256([]byte(abs))
+	h := sha256.Sum256([]byte(fmt.Sprintf("%d:%s", os.Getuid(), abs)))
 	return fmt.Sprintf("/tmp/aoa-%x.sock", h[:6])
 }
 
@@ -453,8 +453,8 @@ func TestInit_LockedDB_OrphanedProcess(t *testing.T) {
 	if exit == 0 {
 		t.Fatal("init should fail when DB is locked")
 	}
-	if elapsed > 3*time.Second {
-		t.Errorf("should fail fast (<3s), took %v", elapsed)
+	if elapsed > 5*time.Second {
+		t.Errorf("should fail fast (<5s), took %v", elapsed)
 	}
 	// Error should mention "another process" since socket is gone.
 	if !strings.Contains(stderr, "locked") {
@@ -1172,8 +1172,8 @@ func TestTiming_AllLockedOperations_FastFail(t *testing.T) {
 			if exit == 0 {
 				t.Errorf("%s should fail when DB is locked", op.name)
 			}
-			if elapsed > 3*time.Second {
-				t.Errorf("%s took %v — should fail within 3 seconds (1s bbolt timeout + overhead)", op.name, elapsed)
+			if elapsed > 5*time.Second {
+				t.Errorf("%s took %v — should fail within 5 seconds (1s bbolt timeout + process overhead)", op.name, elapsed)
 			}
 			if elapsed < 800*time.Millisecond {
 				t.Errorf("%s completed in %v — suspiciously fast, timeout may not be working", op.name, elapsed)

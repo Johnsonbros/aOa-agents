@@ -253,6 +253,15 @@ type App struct {
 	// only the bbolt write is delayed to avoid 306MB rewrites on every file change.
 	indexDirty     bool
 	indexSaveTimer *time.Timer
+
+	// Cached learner snapshot (L11.8) — avoids serializing under mu on every HTTP request.
+	// Multiple dashboard handlers in the same poll cycle share one snapshot.
+	cachedSnapshot     *ports.LearnerState
+	cachedSnapshotTime time.Time
+
+	// Goroutine lifecycle (L11.1): all background goroutines tracked for clean shutdown.
+	bgWg   sync.WaitGroup // tracks all safeGo goroutines
+	stopCh chan struct{}   // closed on Stop() to signal background goroutines
 }
 
 // Config holds initialization parameters for the App.
@@ -372,6 +381,7 @@ func New(cfg Config) (*App, error) {
 		burnRate:            NewBurnRateTracker(5 * time.Minute),
 		burnRateCounterfact: NewBurnRateTracker(5 * time.Minute),
 		rateTracker:         NewRateTracker(30 * time.Minute),
+		stopCh:              make(chan struct{}),
 	}
 
 	// Create server with App as query provider (for domains, stats, etc.)
@@ -737,11 +747,23 @@ func (a *App) flushIndex() {
 // Stop gracefully shuts down all services and persists learner state.
 func (a *App) Stop() error {
 	a.debugf("stopping daemon")
+
+	// Signal all background goroutines to exit.
+	close(a.stopCh)
+
+	// Stop external services (blocks until drained).
 	a.Reader.Stop()
 	a.Watcher.Stop()
 	a.WebServer.Stop()
 	a.Server.Stop()
-	// Persist final state before shutdown
+
+	// Drain search observers — they may still be pushing learner signals.
+	a.Engine.WaitObservers()
+
+	// Wait for all safeGo goroutines (shadow searches, WarmCaches, dim scan).
+	a.bgWg.Wait()
+
+	// Persist final state — all goroutines are stopped, no races.
 	a.mu.Lock()
 	a.flushSessionSummary()
 	a.flushIndex()
@@ -1563,6 +1585,12 @@ func (a *App) LearnerSnapshot() *ports.LearnerState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// Return cached snapshot if fresh (within 1 second).
+	// Multiple dashboard handlers in the same poll cycle share one copy.
+	if a.cachedSnapshot != nil && time.Since(a.cachedSnapshotTime) < 1*time.Second {
+		return a.cachedSnapshot
+	}
+
 	data, err := json.Marshal(a.Learner.State())
 	if err != nil {
 		return &ports.LearnerState{
@@ -1577,11 +1605,13 @@ func (a *App) LearnerSnapshot() *ports.LearnerState {
 			GapKeywords:      make(map[string]bool),
 		}
 	}
-	var copy ports.LearnerState
-	if err := json.Unmarshal(data, &copy); err != nil {
+	var snap ports.LearnerState
+	if err := json.Unmarshal(data, &snap); err != nil {
 		return &ports.LearnerState{}
 	}
-	return &copy
+	a.cachedSnapshot = &snap
+	a.cachedSnapshotTime = time.Now()
+	return &snap
 }
 
 // SessionMetricsSnapshot returns a snapshot of session token metrics.
@@ -1875,7 +1905,8 @@ func (a *App) dispatchShadowSearch(shadow *ToolShadow) {
 		return
 	}
 	engine := a.Engine
-	go func(s *ToolShadow) {
+	s := shadow
+	safeGo(&a.bgWg, "shadow-search", nil, func() {
 		start := time.Now()
 		result := engine.Search(s.Pattern, ports.SearchOptions{})
 		var shadowChars int
@@ -1895,7 +1926,7 @@ func (a *App) dispatchShadowSearch(shadow *ToolShadow) {
 			a.counterfactTokensSaved += int64(s.CharsSaved / 4)
 		}
 		a.mu.Unlock()
-	}(shadow)
+	})
 }
 
 // builderToolResultChars sums ResultChars from all actions in a turn builder.
@@ -2372,7 +2403,9 @@ func (a *App) Reindex() (socket.ReindexResult, error) {
 
 	// Re-scan dimensional analysis in the background after full reindex
 	if a.dimEngine != nil {
-		go a.warmDimCache(func(string) {})
+		safeGo(&a.bgWg, "dim-rescan", nil, func() {
+			a.warmDimCache(func(string) {})
+		})
 	}
 
 	elapsed := time.Since(start)
