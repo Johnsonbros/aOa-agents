@@ -25,7 +25,7 @@ const (
 //	⚡ 15 hits (10 symbol, 5 content) │ Xms
 //	  file:symbol[range]:line  @domain  #tag1 #tag2
 //	  file:line: matching content text
-func formatSearchResult(result *socket.SearchResult, countOnly, quiet, noFilename, noColor bool) string {
+func formatSearchResult(result *socket.SearchResult, countOnly, quiet, noFilename, noColor bool, query ...string) string {
 	if quiet {
 		return ""
 	}
@@ -61,9 +61,16 @@ func formatSearchResult(result *socket.SearchResult, countOnly, quiet, noFilenam
 	hints := showHints()
 
 	var sb strings.Builder
+	// Extract query for contextual hints
+	var q string
+	if len(query) > 0 {
+		q = query[0]
+	}
+
 	if noColor {
 		if len(result.Hits) == 0 && hints {
-			sb.WriteString(fmt.Sprintf("aOa: 0 hits | 0 files | %s\n", pickZeroResultHint()))
+			sb.WriteString(fmt.Sprintf("aOa: 0 hits | 0 files\n"))
+			sb.WriteString(buildZeroResultHint(q))
 		} else if peek {
 			sb.WriteString(fmt.Sprintf("aOa: %d hits | %d files | %d lines in ranges\n",
 				len(result.Hits), len(fileSet), totalRangeLines))
@@ -72,8 +79,8 @@ func formatSearchResult(result *socket.SearchResult, countOnly, quiet, noFilenam
 				len(result.Hits), len(fileSet)))
 		}
 	} else if len(result.Hits) == 0 && hints {
-		sb.WriteString(fmt.Sprintf("%s⚡ 0 hits%s │ %s\n",
-			cBold, cReset, pickZeroResultHint()))
+		sb.WriteString(fmt.Sprintf("%s⚡ 0 hits%s\n", cBold, cReset))
+		sb.WriteString(buildZeroResultHint(q))
 	} else if peek {
 		sb.WriteString(fmt.Sprintf("%s⚡ %d hits%s │ %d files │ %d lines in ranges │ %s\n",
 			cBold, len(result.Hits), cReset, len(fileSet), totalRangeLines, result.Elapsed))

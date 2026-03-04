@@ -5,6 +5,7 @@
 
 # Build artifacts
 dist/
+*.test
 
 # Runtime state (project-local, not committed)
 .aoa/

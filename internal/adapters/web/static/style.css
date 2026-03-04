@@ -551,6 +551,8 @@ body {
 .chip-grep   { background: var(--red-dim); color: var(--red); }
 .chip-glob   { background: var(--red-dim); color: var(--red); }
 .chip-search { background: var(--cyan-dim); color: var(--cyan); }
+.chip-agent  { background: var(--purple-dim); color: var(--purple); }
+.chip-agent-type { background: var(--border-subtle); color: var(--mute); }
 .chip-other  { background: var(--border-subtle); color: var(--mute); }
 .conv-action-path {
   font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--dim);

@@ -400,8 +400,12 @@ func (t *Tailer) readSubagentLines() {
 				continue
 			}
 
-			// Tag as subagent source
+			// Tag as subagent source and extract agent ID from filename
 			ev.Source = "subagent"
+			name := entry.Name()
+			if strings.HasPrefix(name, "agent-") && strings.HasSuffix(name, ".jsonl") {
+				ev.SubagentID = strings.TrimSuffix(strings.TrimPrefix(name, "agent-"), ".jsonl")
+			}
 
 			// UUID dedup (two-generation)
 			if ev.UUID != "" {

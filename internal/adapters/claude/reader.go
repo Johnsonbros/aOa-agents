@@ -187,6 +187,7 @@ func (r *Reader) translate(raw *tailer.SessionEvent) []ports.SessionEvent {
 	if raw.Source == "subagent" {
 		for i := range events {
 			events[i].IsSubagent = true
+			events[i].SubagentID = raw.SubagentID
 		}
 	}
 	return events
@@ -225,6 +226,7 @@ func (r *Reader) translateUser(raw *tailer.SessionEvent) []ports.SessionEvent {
 			Timestamp:          raw.Timestamp,
 			Kind:               ports.EventToolResult,
 			ToolResultSizes:    raw.ToolResultSizes,
+			ToolResultTexts:    raw.ToolResultTexts,
 			ToolPersistedSizes: persistedSizes,
 			AgentVersion:       raw.Version,
 		})

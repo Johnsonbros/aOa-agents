@@ -223,6 +223,13 @@ type TurnActionResult struct {
 	Command     string `json:"command,omitempty"`    // L9.2: shell command (Bash)
 	ShadowChars int    `json:"shadow_chars,omitempty"` // L9.5: aOa shadow search chars
 	ShadowSaved int    `json:"shadow_saved,omitempty"` // L9.5: chars saved vs native
+
+	// Subagent telemetry (Agent tool only)
+	SubagentTokens     int                `json:"subagent_tokens,omitempty"`
+	SubagentToolUses   int                `json:"subagent_tool_uses,omitempty"`
+	SubagentDurationMs int64              `json:"subagent_duration_ms,omitempty"`
+	SubagentType       string             `json:"subagent_type,omitempty"`
+	Children           []TurnActionResult `json:"children,omitempty"`
 }
 
 // ActivityEntryResult describes a single action in the activity feed.

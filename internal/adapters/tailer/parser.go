@@ -47,12 +47,20 @@ type SessionEvent struct {
 	// Tool result sizes (tool_use_id -> content char count)
 	ToolResultSizes map[string]int
 
+	// ToolResultTexts carries tool_result content text for downstream
+	// parsing (e.g., Agent usage stats from <usage> tags).
+	ToolResultTexts map[string]string
+
 	// ToolPersistedIDs tracks which tool_use_ids were resolved from
 	// persisted tool-results/ files on disk (L9.3).
 	ToolPersistedIDs map[string]bool
 
 	// Source identifies where this event came from: "main" or "subagent".
 	Source string
+
+	// SubagentID is the agent identifier extracted from the subagent filename
+	// (e.g., "agent-abc123" from "agent-abc123.jsonl"). Empty for main events.
+	SubagentID string
 
 	// System event details
 	Subtype    string // e.g., "turn_duration"
@@ -254,19 +262,26 @@ func (e *SessionEvent) extractContentBlock(block map[string]any, role string) {
 		toolUseID := getStringAny(block, "tool_use_id", "id")
 		if toolUseID != "" {
 			chars := 0
+			var contentText string
 			// Content can be string, array of blocks, or just "text" field
 			switch c := block["content"].(type) {
 			case string:
 				chars = len(c)
+				contentText = c
 			case []any:
+				var parts []string
 				for _, item := range c {
 					if m, ok := item.(map[string]any); ok {
-						chars += len(getString(m, "text"))
+						t := getString(m, "text")
+						chars += len(t)
+						parts = append(parts, t)
 					}
 				}
+				contentText = strings.Join(parts, "")
 			default:
 				// Fallback: use "text" field length if present
 				chars = len(text)
+				contentText = text
 			}
 			// L9.3: Always record the toolUseID, even when chars == 0.
 			// Zero-char entries get resolved from persisted tool-results/ files.
@@ -274,6 +289,13 @@ func (e *SessionEvent) extractContentBlock(block map[string]any, role string) {
 				e.ToolResultSizes = make(map[string]int)
 			}
 			e.ToolResultSizes[toolUseID] = chars
+			// Capture tool_result text for downstream parsing (Agent usage stats).
+			if len(contentText) > 0 {
+				if e.ToolResultTexts == nil {
+					e.ToolResultTexts = make(map[string]string)
+				}
+				e.ToolResultTexts[toolUseID] = contentText
+			}
 		}
 	}
 }

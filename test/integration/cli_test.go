@@ -54,6 +54,12 @@ func killAllDaemons() {
 }
 
 func TestMain(m *testing.M) {
+	// Pre-cleanup: kill orphaned daemons from previous interrupted test runs.
+	// These escape the PID tracker when the test binary crashes or is killed.
+	if out, err := exec.Command("pkill", "-9", "-f", "/tmp/aoa-integration-.*/aoa daemon").CombinedOutput(); err != nil {
+		_ = out // pkill returns 1 when no processes matched — that's fine
+	}
+
 	// Kill any leaked daemons on interrupt (Ctrl+C, timeout, etc.).
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

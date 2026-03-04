@@ -26,6 +26,10 @@ type ContentMeter struct {
 	APIInputTokens     int
 	APICacheReadTokens int
 
+	// Subagent API-reported tokens (separate API calls made by subagent forks)
+	SubagentAPIInputTokens  int
+	SubagentAPIOutputTokens int
+
 	// Timing
 	ActiveMs  int64 // sum of turn_duration events (excludes idle)
 	TurnCount int
@@ -85,6 +89,12 @@ func (m *ContentMeter) RecordAPI(input, output, cacheRead int) {
 	m.APIInputTokens += input
 	m.APIOutputTokens += output
 	m.APICacheReadTokens += cacheRead
+}
+
+// RecordSubagentAPI adds API-reported token counts from subagent forks.
+func (m *ContentMeter) RecordSubagentAPI(input, output int) {
+	m.SubagentAPIInputTokens += input
+	m.SubagentAPIOutputTokens += output
 }
 
 // RecordActiveMs adds active (non-idle) milliseconds from a turn duration.

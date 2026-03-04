@@ -1154,45 +1154,39 @@ function renderDebrief() {
 
     for (var a = 0; a < actions.length; a++) {
       var act = actions[a];
-      var targetStr = act.target || '';
-      if (act.range) targetStr += act.range;
-      // L9.2: Build detail subtitle from pattern/command/file_path
-      var detailStr = '';
-      if (act.pattern) detailStr = act.pattern;
-      else if (act.command) detailStr = act.command;
-      else if (act.file_path && !targetStr) detailStr = act.file_path;
-      // Savings cell: compact 4-char max (e.g. ↓88%)
-      var saveVal = '';
-      if (act.savings > 0) {
-        saveVal = '<span class="text-green">\u2193' + act.savings + '%</span>';
-      }
-      // L9.8: Shadow savings cell
-      if (act.shadow_saved > 0 && (act.shadow_chars + act.shadow_saved) > 0) {
-        var pct = Math.round((1 - act.shadow_chars / (act.shadow_chars + act.shadow_saved)) * 100);
-        if (isFinite(pct)) {
-          saveVal += (saveVal ? ' ' : '') + '<span class="text-cyan" title="Shadow: ' + fmtK(act.shadow_chars + act.shadow_saved) + ' \u2192 ' + fmtK(act.shadow_chars) + '">\u2193' + pct + '%</span>';
+      ahtml += renderActionRow(act, false);
+      // Render subagent children if present
+      if (act.tool === 'Agent' && act.children && act.children.length > 0) {
+        var collapsed = act.children.length > 6;
+        var childId = 'agent-children-' + e2 + '-' + a;
+        if (collapsed) {
+          ahtml += '<div class="agent-children-toggle" onclick="toggleAgentChildren(\'' + childId + '\', this)" style="cursor:pointer;padding-left:2.8em;color:var(--cyan);font-size:0.85em">\u25B6 ' + act.children.length + ' tool calls...</div>';
+          ahtml += '<div id="' + childId + '" class="agent-children" style="display:none">';
+        }
+        for (var c = 0; c < act.children.length; c++) {
+          ahtml += renderActionRow(act.children[c], true);
+        }
+        if (collapsed) {
+          ahtml += '</div>';
         }
       }
-      // Tokens cell: compact 4-char max (e.g. 1.2k, 11k, 340)
-      // Fallback: estimate tokens from result_chars for tools that don't set tokens at invocation (e.g. Task)
-      var tokVal = '';
-      var displayTokens = act.tokens > 0 ? act.tokens : (act.result_chars > 0 ? Math.round(act.result_chars / 4) : 0);
-      if (displayTokens > 0) {
-        var tokCls = act.attrib === 'aOa guided' ? 'text-green' : (act.attrib === 'unguided' ? 'text-red' : 'text-dim');
-        tokVal = '<span class="' + tokCls + '">' + fmtK(displayTokens) + '</span>';
+      // Agent summary footer — always show when we have usage data
+      if (act.tool === 'Agent' && (act.subagent_tokens > 0 || act.subagent_tool_uses > 0 || act.subagent_duration_ms > 0)) {
+        var durStr = '';
+        if (act.subagent_duration_ms > 0) {
+          durStr = ' \u00B7 ' + (act.subagent_duration_ms / 1000).toFixed(1) + 's';
+        }
+        var childCount = act.children ? act.children.length : 0;
+        var toolCount = act.subagent_tool_uses > 0 ? act.subagent_tool_uses : childCount;
+        var tokCount = act.subagent_tokens > 0 ? fmtK(act.subagent_tokens) + ' tok' : '';
+        var parts = [];
+        if (toolCount > 0) parts.push(toolCount + ' tools');
+        if (tokCount) parts.push(tokCount);
+        if (durStr) parts.push(durStr.substring(3)); // trim leading ' · '
+        ahtml += '<div class="agent-summary" style="padding-left:1.6em;font-size:0.8em;color:var(--text-dim)">' +
+          '\u2514 ' + parts.join(' \u00B7 ') +
+          '</div>';
       }
-      var pathStyle = act.attrib === 'unguided' ? ' style="color:var(--red)"' : '';
-      // L9.2: Tooltip includes detail (pattern/command) when available
-      var fullTooltip = targetStr;
-      if (detailStr && detailStr !== targetStr) fullTooltip += '\n' + detailStr;
-      ahtml += '<div class="conv-action-item">' +
-        '<span class="act-left">' +
-          '<span class="conv-tool-chip ' + getToolChipClass(act.tool) + '">' + escapeHtml(act.tool) + '</span>' +
-          '<span class="conv-action-path"' + pathStyle + ' title="' + escapeHtml(fullTooltip) + '">' + escapeHtml(truncPath(targetStr, 80)) + '</span>' +
-        '</span>' +
-        '<span class="act-cell">' + saveVal + '</span>' +
-        '<span class="act-cell">' + tokVal + '</span>' +
-        '</div>';
     }
     ahtml += '</div>';
   }
@@ -1202,6 +1196,71 @@ function renderDebrief() {
   // Auto-scroll actions if user was near bottom
   if (actWasNear && actContainer) {
     actContainer.scrollTop = actContainer.scrollHeight;
+  }
+}
+
+function renderActionRow(act, isChild) {
+  var targetStr = act.target || '';
+  if (act.range) targetStr += act.range;
+  var detailStr = '';
+  if (act.pattern) detailStr = act.pattern;
+  else if (act.command) detailStr = act.command;
+  else if (act.file_path && !targetStr) detailStr = act.file_path;
+  // Savings cell
+  var saveVal = '';
+  if (act.savings > 0) {
+    saveVal = '<span class="text-green">\u2193' + act.savings + '%</span>';
+  }
+  if (act.shadow_saved > 0 && (act.shadow_chars + act.shadow_saved) > 0) {
+    var pct = Math.round((1 - act.shadow_chars / (act.shadow_chars + act.shadow_saved)) * 100);
+    if (isFinite(pct)) {
+      saveVal += (saveVal ? ' ' : '') + '<span class="text-cyan" title="Shadow: ' + fmtK(act.shadow_chars + act.shadow_saved) + ' \u2192 ' + fmtK(act.shadow_chars) + '">\u2193' + pct + '%</span>';
+    }
+  }
+  // Tokens cell — Agent rows show subagent_tokens; children/others estimate from result_chars
+  var tokVal = '';
+  var displayTokens;
+  if (act.tool === 'Agent' && act.subagent_tokens > 0) {
+    displayTokens = act.subagent_tokens;
+  } else {
+    displayTokens = act.tokens > 0 ? act.tokens : (act.result_chars > 0 ? Math.round(act.result_chars / 4) : 0);
+  }
+  if (displayTokens > 0) {
+    var tokCls = act.attrib === 'aOa guided' ? 'text-green' : (act.attrib === 'unguided' ? 'text-red' : 'text-dim');
+    tokVal = '<span class="' + tokCls + '">' + fmtK(displayTokens) + '</span>';
+  }
+  var pathStyle = act.attrib === 'unguided' ? ' style="color:var(--red)"' : '';
+  var fullTooltip = targetStr;
+  if (detailStr && detailStr !== targetStr) fullTooltip += '\n' + detailStr;
+  // Subagent type chip for Agent rows
+  var typeChip = '';
+  if (act.tool === 'Agent' && act.subagent_type) {
+    typeChip = '<span class="conv-tool-chip chip-agent-type" style="font-size:0.75em;margin-left:0.3em;opacity:0.7">' + escapeHtml(act.subagent_type) + '</span>';
+  }
+  // Child indent styling
+  var childStyle = isChild ? ' style="padding-left:2.8em;border-left:2px solid var(--border);margin-left:0.6em"' : '';
+  var connector = isChild ? '<span style="color:var(--text-dim);margin-right:0.3em">\u2502</span>' : '';
+  return '<div class="conv-action-item"' + childStyle + '>' +
+    '<span class="act-left">' +
+      connector +
+      '<span class="conv-tool-chip ' + getToolChipClass(act.tool) + '">' + escapeHtml(act.tool) + '</span>' +
+      typeChip +
+      '<span class="conv-action-path"' + pathStyle + ' title="' + escapeHtml(fullTooltip) + '">' + escapeHtml(truncPath(targetStr, 80)) + '</span>' +
+    '</span>' +
+    '<span class="act-cell">' + saveVal + '</span>' +
+    '<span class="act-cell">' + tokVal + '</span>' +
+    '</div>';
+}
+
+function toggleAgentChildren(id, el) {
+  var div = document.getElementById(id);
+  if (!div) return;
+  if (div.style.display === 'none') {
+    div.style.display = '';
+    el.innerHTML = el.innerHTML.replace('\u25B6', '\u25BC');
+  } else {
+    div.style.display = 'none';
+    el.innerHTML = el.innerHTML.replace('\u25BC', '\u25B6');
   }
 }
 
@@ -1215,6 +1274,7 @@ function getToolChipClass(tool) {
   if (t.indexOf('grep') !== -1) return 'chip-grep';
   if (t.indexOf('glob') !== -1) return 'chip-glob';
   if (t.indexOf('search') !== -1) return 'chip-search';
+  if (t === 'agent') return 'chip-agent';
   return 'chip-other';
 }
 

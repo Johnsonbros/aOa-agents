@@ -87,12 +87,21 @@ type SessionEvent struct {
 	// Non-nil only on EventToolResult events.
 	ToolResultSizes map[string]int
 
+	// ToolResultTexts maps tool_use_id to tool_result content text.
+	// Used to parse Agent usage stats from <usage> tags in tool_result content.
+	// Non-nil only on EventToolResult events.
+	ToolResultTexts map[string]string
+
 	// ToolPersistedSizes maps tool_use_id to character count resolved from
 	// persisted tool-results/ files on disk (L9.3). Non-nil only on EventToolResult.
 	ToolPersistedSizes map[string]int
 
 	// IsSubagent is true when this event originated from a subagent JSONL file (L9.4).
 	IsSubagent bool
+
+	// SubagentID is the agent identifier from the subagent filename
+	// (e.g., "agent-abc123"). Used to correlate subagent tool calls to parent Agent actions.
+	SubagentID string
 
 	// DurationMs is the turn duration in milliseconds.
 	// Non-zero only on SystemMeta events with timing data.
