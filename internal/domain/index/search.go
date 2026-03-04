@@ -233,6 +233,34 @@ func (e *SearchEngine) Search(query string, opts ports.SearchOptions) *SearchRes
 		maxCount = 20
 	}
 
+	// Pre-compute matching file IDs when glob filters are set.
+	// This turns O(n) per-ref glob regex matches into O(1) map lookups,
+	// and lets content scanning iterate only matching files instead of all files.
+	var allowedFiles map[uint32]bool // nil = all files match
+	hasGlobs := opts.IncludeGlob != "" || opts.ExcludeGlob != "" || opts.ExcludeDirGlob != ""
+	if hasGlobs {
+		tGlob := time.Now()
+		allowedFiles = e.fileIDsMatchingGlob(opts)
+		if e.debug {
+			fmt.Printf("[%s] [debug] search phase=glob-prefilter query=%q matched=%d/%d elapsed=%v\n",
+				time.Now().Format("15:04:05.000"), query, len(allowedFiles), len(e.idx.Files), time.Since(tGlob))
+		}
+		// Fast exit: if no files match the glob, no results are possible
+		// (unless InvertMatch or FilesWithoutMatch needs the full set).
+		if len(allowedFiles) == 0 && !opts.InvertMatch && !opts.FilesWithoutMatch {
+			result := e.buildResult(nil, opts, maxCount)
+			elapsed := time.Since(start)
+			if e.observer != nil {
+				e.observerWg.Add(1)
+				go func() {
+					defer e.observerWg.Done()
+					e.observer(query, opts, result, elapsed)
+				}()
+			}
+			return result
+		}
+	}
+
 	var hits []Hit
 
 	// Symbol search: skip when no symbols are indexed (lean/tokenization-only mode).
@@ -241,9 +269,18 @@ func (e *SearchEngine) Search(query string, opts ports.SearchOptions) *SearchRes
 	if len(e.idx.Metadata) > 0 {
 		switch {
 		case opts.Mode == "regex":
-			hits = e.searchRegex(query, opts)
+			hits = e.searchRegex(query, opts, allowedFiles)
 		case opts.AndMode:
-			hits = e.searchAND(query, opts)
+			hits = e.searchAND(query, opts, allowedFiles)
+		case opts.WordBoundary:
+			// Word boundary mode: match the full query as a complete word in
+			// symbol names. The query is tokenized to find candidate refs via
+			// the inverted index, but the final filter uses a case-insensitive
+			// word-boundary regex against the symbol name. This prevents
+			// camelCase-split fragments (e.g. "TTailerToCanonical" ->
+			// [tailer, to, canonical]) from matching unrelated symbols that
+			// happen to contain one fragment like "to".
+			hits = e.searchWordBoundary(query, opts, maxCount, allowedFiles)
 		default:
 			tokens := Tokenize(query)
 			if opts.Mode == "case_insensitive" {
@@ -262,9 +299,9 @@ func (e *SearchEngine) Search(query string, opts ports.SearchOptions) *SearchRes
 				symLimit = 0 // 0 = no limit
 			}
 			if len(tokens) == 1 {
-				hits = e.searchLiteral(tokens[0], opts, symLimit)
+				hits = e.searchLiteral(tokens[0], opts, symLimit, allowedFiles)
 			} else {
-				hits = e.searchOR(tokens, opts, symLimit)
+				hits = e.searchOR(tokens, opts, symLimit, allowedFiles)
 			}
 		}
 	}
@@ -275,7 +312,7 @@ func (e *SearchEngine) Search(query string, opts ports.SearchOptions) *SearchRes
 
 	// Invert symbol hits: replace with all symbols NOT in the matched set
 	if opts.InvertMatch {
-		hits = e.invertSymbolHits(hits, opts)
+		hits = e.invertSymbolHits(hits, opts, allowedFiles)
 	}
 
 	// Append content hits from file body scanning (grep-style).
@@ -283,7 +320,7 @@ func (e *SearchEngine) Search(query string, opts ports.SearchOptions) *SearchRes
 	// fallback for when symbols are insufficient, not a supplement.
 	if e.projectRoot != "" && (len(hits) < maxCount || opts.CountOnly) {
 		t0 := time.Now()
-		contentHits := e.scanFileContents(query, opts, hits)
+		contentHits := e.scanFileContents(query, opts, hits, allowedFiles)
 		hits = append(hits, contentHits...)
 		if e.debug {
 			fmt.Printf("[%s] [debug] search phase=content query=%q candidates=%d elapsed=%v\n",
@@ -293,7 +330,7 @@ func (e *SearchEngine) Search(query string, opts ports.SearchOptions) *SearchRes
 
 	// -L: files-without-match — return files NOT in the matched set
 	if opts.FilesWithoutMatch {
-		hits = e.filesWithoutMatch(hits, opts)
+		hits = e.filesWithoutMatch(hits, opts, allowedFiles)
 	}
 
 	// -o: only-matching — replace content with just the matching substring
@@ -338,7 +375,8 @@ func (e *SearchEngine) Search(query string, opts ports.SearchOptions) *SearchRes
 // searchLiteral performs a single-term O(1) lookup.
 // Results are in insertion order (file_id ascending, line ascending).
 // When limit > 0, stops after collecting that many hits (early termination).
-func (e *SearchEngine) searchLiteral(token string, opts ports.SearchOptions, limit int) []Hit {
+// allowedFiles, when non-nil, restricts results to pre-computed matching file IDs.
+func (e *SearchEngine) searchLiteral(token string, opts ports.SearchOptions, limit int, allowedFiles map[uint32]bool) []Hit {
 	refs, ok := e.idx.Tokens[token]
 	if !ok {
 		return nil
@@ -346,6 +384,9 @@ func (e *SearchEngine) searchLiteral(token string, opts ports.SearchOptions, lim
 
 	var hits []Hit
 	for _, ref := range refs {
+		if allowedFiles != nil && !allowedFiles[ref.FileID] {
+			continue
+		}
 		sym := e.idx.Metadata[ref]
 		if sym == nil {
 			continue
@@ -355,13 +396,7 @@ func (e *SearchEngine) searchLiteral(token string, opts ports.SearchOptions, lim
 			continue
 		}
 
-		if opts.WordBoundary {
-			if !e.refHasToken(ref, token) {
-				continue
-			}
-		}
-
-		if !matchesAllGlobs(file.Path, opts) {
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 			continue
 		}
 
@@ -376,12 +411,141 @@ func (e *SearchEngine) searchLiteral(token string, opts ports.SearchOptions, lim
 	return hits
 }
 
+// searchWordBoundary implements -w (word boundary) search for symbol names.
+// The query is tokenized and ALL query tokens must appear as exact tokens in
+// the symbol's token list. This prevents camelCase-split fragments (e.g.
+// "TTailerToCanonical" -> [tailer, to, canonical]) from matching unrelated
+// symbols that happen to contain one common fragment like "to".
+//
+// For single-token queries this is equivalent to the old refHasToken check.
+// For multi-token queries this is an AND-match on token lists, which is the
+// correct word-boundary semantic: every word in the query must exist as a
+// discrete word in the symbol name.
+func (e *SearchEngine) searchWordBoundary(query string, opts ports.SearchOptions, maxCount int, allowedFiles map[uint32]bool) []Hit {
+	// Tokenize query to find candidate refs via the inverted index.
+	tokens := Tokenize(query)
+	if opts.Mode == "case_insensitive" {
+		for i, t := range tokens {
+			tokens[i] = strings.ToLower(t)
+		}
+	}
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	// Early termination limits
+	symLimit := maxCount
+	if opts.CountOnly || opts.InvertMatch {
+		symLimit = 0
+	}
+
+	// Fast path for single-token queries: O(1) index lookup + refHasToken filter.
+	if len(tokens) == 1 {
+		return e.searchLiteral(tokens[0], opts, symLimit, allowedFiles)
+	}
+
+	// Multi-token path: collect candidate refs from ALL token posting lists,
+	// then filter to only those refs that contain every query token.
+
+	// Build token set for lookup
+	tokenSet := make(map[string]bool, len(tokens))
+	for _, tok := range tokens {
+		tokenSet[tok] = true
+	}
+
+	// Start with the shortest posting list for efficiency (smallest first
+	// strategy reduces the candidate set early).
+	type postingEntry struct {
+		token string
+		refs  []ports.TokenRef
+	}
+	var postings []postingEntry
+	for _, tok := range tokens {
+		refs, ok := e.idx.Tokens[tok]
+		if !ok {
+			// If any query token has zero matches, no symbol can contain
+			// ALL tokens. Return empty.
+			return nil
+		}
+		postings = append(postings, postingEntry{tok, refs})
+	}
+	sort.Slice(postings, func(i, j int) bool {
+		return len(postings[i].refs) < len(postings[j].refs)
+	})
+
+	// Build candidate set from the smallest posting list
+	candidates := make(map[ports.TokenRef]bool, len(postings[0].refs))
+	for _, ref := range postings[0].refs {
+		candidates[ref] = true
+	}
+
+	// Intersect with remaining posting lists
+	for i := 1; i < len(postings); i++ {
+		next := make(map[ports.TokenRef]bool)
+		for _, ref := range postings[i].refs {
+			if candidates[ref] {
+				next[ref] = true
+			}
+		}
+		candidates = next
+		if len(candidates) == 0 {
+			return nil
+		}
+	}
+
+	// Verify each candidate: all query tokens must appear in the ref's token list.
+	// The intersection above used posting lists, but a ref can appear in a
+	// posting list for token X even if it doesn't have token X as an exact match
+	// (e.g., case-insensitive mode). Double-check with refHasToken.
+	var hits []Hit
+	for ref := range candidates {
+		if allowedFiles != nil && !allowedFiles[ref.FileID] {
+			continue
+		}
+		sym := e.idx.Metadata[ref]
+		if sym == nil {
+			continue
+		}
+		file := e.idx.Files[ref.FileID]
+		if file == nil {
+			continue
+		}
+
+		// Verify all query tokens are present as exact tokens in this ref
+		allPresent := true
+		for _, tok := range tokens {
+			if !e.refHasToken(ref, tok) {
+				allPresent = false
+				break
+			}
+		}
+		if !allPresent {
+			continue
+		}
+
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
+			continue
+		}
+
+		hits = append(hits, e.buildHit(ref, sym, file))
+	}
+
+	sortByFileIDLine(hits)
+
+	// Apply limit after sorting (intersection candidates aren't insertion-ordered)
+	if symLimit > 0 && len(hits) > symLimit {
+		hits = hits[:symLimit]
+	}
+
+	return hits
+}
+
 // searchOR performs multi-term union.
 // Sort: symbol density descending (symbols matching more query terms rank higher),
 // then file ID ascending, then line ascending.
 // When limit > 0, caps per-list collection at 5×limit to bound work while
 // retaining enough candidates for accurate density ranking.
-func (e *SearchEngine) searchOR(tokens []string, opts ports.SearchOptions, limit int) []Hit {
+func (e *SearchEngine) searchOR(tokens []string, opts ports.SearchOptions, limit int, allowedFiles map[uint32]bool) []Hit {
 	// Build token set for quick lookup
 	tokenSet := make(map[string]bool, len(tokens))
 	for _, tok := range tokens {
@@ -442,6 +606,9 @@ func (e *SearchEngine) searchOR(tokens []string, opts ports.SearchOptions, limit
 
 	var hits []Hit
 	for _, ref := range allRefs {
+		if allowedFiles != nil && !allowedFiles[ref.FileID] {
+			continue
+		}
 		sym := e.idx.Metadata[ref]
 		if sym == nil {
 			continue
@@ -451,20 +618,7 @@ func (e *SearchEngine) searchOR(tokens []string, opts ports.SearchOptions, limit
 			continue
 		}
 
-		if opts.WordBoundary {
-			hasAny := false
-			for _, tok := range tokens {
-				if e.refHasToken(ref, tok) {
-					hasAny = true
-					break
-				}
-			}
-			if !hasAny {
-				continue
-			}
-		}
-
-		if !matchesAllGlobs(file.Path, opts) {
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 			continue
 		}
 
@@ -477,8 +631,21 @@ func (e *SearchEngine) searchOR(tokens []string, opts ports.SearchOptions, limit
 	return hits
 }
 
-// searchAND performs multi-term intersection.
-func (e *SearchEngine) searchAND(query string, opts ports.SearchOptions) []Hit {
+// searchAND performs multi-term intersection via sorted merge-join.
+//
+// Algorithm:
+//  1. Tokenize each comma-separated term; deduplicate.
+//  2. Look up posting lists; if any token has zero refs, return nil.
+//  3. Sort posting lists by length (smallest first).
+//  4. Intersect pairwise using sorted merge-join: walk two sorted posting
+//     lists with two cursors, advancing the smaller one, emitting on match.
+//     Each merge-join is O(|A|+|B|) with zero map allocation.
+//  5. Chain intersections: result of each join feeds into the next.
+//
+// Posting lists are naturally sorted by (FileID, Line) from index construction,
+// so merge-join works without any pre-sorting. This avoids the map[TokenRef]bool
+// allocations that made the old approach O(sum_of_all_lists) in memory.
+func (e *SearchEngine) searchAND(query string, opts ports.SearchOptions, allowedFiles map[uint32]bool) []Hit {
 	termStrs := strings.Split(query, ",")
 	var tokens []string
 	for _, t := range termStrs {
@@ -491,51 +658,52 @@ func (e *SearchEngine) searchAND(query string, opts ports.SearchOptions) []Hit {
 		return nil
 	}
 
-	// Collect posting lists, sorted by length (smallest first).
-	// Only build a map for the smallest set; check others via map lookup.
-	type postingList struct {
-		refs []ports.TokenRef
+	// Deduplicate tokens to avoid redundant intersection passes.
+	seenTok := make(map[string]bool, len(tokens))
+	unique := tokens[:0]
+	for _, tok := range tokens {
+		if !seenTok[tok] {
+			seenTok[tok] = true
+			unique = append(unique, tok)
+		}
 	}
-	var lists []postingList
+	tokens = unique
+
+	// Single-token AND is just a literal lookup.
+	if len(tokens) == 1 {
+		return e.searchLiteral(tokens[0], opts, 0, allowedFiles)
+	}
+
+	// Collect posting lists and verify all tokens exist in the index.
+	lists := make([][]ports.TokenRef, 0, len(tokens))
 	for _, tok := range tokens {
 		refs, ok := e.idx.Tokens[tok]
 		if !ok {
 			return nil // one term missing -> empty intersection
 		}
-		lists = append(lists, postingList{refs: refs})
+		lists = append(lists, refs)
 	}
+
+	// Sort by posting list length (smallest first) for early reduction.
 	sort.Slice(lists, func(i, j int) bool {
-		return len(lists[i].refs) < len(lists[j].refs)
+		return len(lists[i]) < len(lists[j])
 	})
 
-	// Build map only for the smallest posting list
-	smallest := make(map[ports.TokenRef]bool, len(lists[0].refs))
-	for _, ref := range lists[0].refs {
-		smallest[ref] = true
-	}
-
-	// Build maps for remaining lists (only if they're small enough)
-	// For large lists, build on demand
-	result := smallest
+	// Chain pairwise merge-join intersections starting from the two smallest.
+	// Each intersection produces a sorted result that feeds into the next.
+	result := lists[0]
 	for i := 1; i < len(lists); i++ {
-		other := make(map[ports.TokenRef]bool, len(lists[i].refs))
-		for _, ref := range lists[i].refs {
-			other[ref] = true
-		}
-		intersected := make(map[ports.TokenRef]bool)
-		for ref := range result {
-			if other[ref] {
-				intersected[ref] = true
-			}
-		}
-		result = intersected
+		result = intersectSortedRefs(result, lists[i])
 		if len(result) == 0 {
 			return nil
 		}
 	}
 
 	var hits []Hit
-	for ref := range result {
+	for _, ref := range result {
+		if allowedFiles != nil && !allowedFiles[ref.FileID] {
+			continue
+		}
 		sym := e.idx.Metadata[ref]
 		if sym == nil {
 			continue
@@ -545,22 +713,44 @@ func (e *SearchEngine) searchAND(query string, opts ports.SearchOptions) []Hit {
 			continue
 		}
 
-		if !matchesAllGlobs(file.Path, opts) {
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 			continue
 		}
 
 		hits = append(hits, e.buildHit(ref, sym, file))
 	}
 
-	sortByFileIDLine(hits)
+	// Result from merge-join is already sorted by (FileID, Line).
 	return hits
+}
+
+// intersectSortedRefs returns the intersection of two posting lists that are
+// sorted by (FileID, Line). Uses a merge-join walk with two cursors -- O(|a|+|b|)
+// time, O(|intersection|) space. Zero map allocation.
+func intersectSortedRefs(a, b []ports.TokenRef) []ports.TokenRef {
+	var out []ports.TokenRef
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		ra, rb := a[i], b[j]
+		if ra.FileID < rb.FileID || (ra.FileID == rb.FileID && ra.Line < rb.Line) {
+			i++
+		} else if ra.FileID > rb.FileID || (ra.FileID == rb.FileID && ra.Line > rb.Line) {
+			j++
+		} else {
+			// Match: same (FileID, Line)
+			out = append(out, ra)
+			i++
+			j++
+		}
+	}
+	return out
 }
 
 // searchRegex compiles a regex and scans symbols.
 // Optimization: extracts literal substrings from the pattern and uses the token
 // index to narrow candidates before applying the regex. Falls back to full scan
 // only when no literals can be extracted.
-func (e *SearchEngine) searchRegex(pattern string, opts ports.SearchOptions) []Hit {
+func (e *SearchEngine) searchRegex(pattern string, opts ports.SearchOptions, allowedFiles map[uint32]bool) []Hit {
 	if opts.WordBoundary {
 		pattern = `\b` + pattern + `\b`
 	}
@@ -571,12 +761,15 @@ func (e *SearchEngine) searchRegex(pattern string, opts ports.SearchOptions) []H
 
 	// Try to extract literal substrings for pre-filtering via token index.
 	// This narrows the candidate set from O(all symbols) to O(matching refs).
-	candidates := e.regexCandidateRefs(pattern)
+	candidates, hadLiterals := e.regexCandidateRefs(pattern)
 
 	var hits []Hit
-	if candidates != nil {
+	if len(candidates) > 0 {
 		// Fast path: check only candidate refs from token index
 		for _, ref := range candidates {
+			if allowedFiles != nil && !allowedFiles[ref.FileID] {
+				continue
+			}
 			sym := e.idx.Metadata[ref]
 			if sym == nil {
 				continue
@@ -588,17 +781,21 @@ func (e *SearchEngine) searchRegex(pattern string, opts ports.SearchOptions) []H
 			if !re.MatchString(sym.Name) {
 				continue
 			}
-			if !matchesAllGlobs(file.Path, opts) {
+			if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 				continue
 			}
 			hits = append(hits, e.buildHit(ref, sym, file))
 		}
 	}
-	if candidates == nil || len(hits) == 0 {
-		// Slow path: no literals extractable or pre-filter missed matches.
-		// Full scan of all symbols.
+	if len(hits) == 0 && !(hadLiterals && len(candidates) == 0) {
+		// Slow path: full-scan all symbols.
+		// Skip when we extracted regex literals but found zero posting list refs —
+		// if the literal tokens don't exist in the index, no symbol can match.
 		hits = hits[:0]
 		for ref, sym := range e.idx.Metadata {
+			if allowedFiles != nil && !allowedFiles[ref.FileID] {
+				continue
+			}
 			if sym == nil {
 				continue
 			}
@@ -609,7 +806,7 @@ func (e *SearchEngine) searchRegex(pattern string, opts ports.SearchOptions) []H
 			if !re.MatchString(sym.Name) {
 				continue
 			}
-			if !matchesAllGlobs(file.Path, opts) {
+			if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 				continue
 			}
 			hits = append(hits, e.buildHit(ref, sym, file))
@@ -621,16 +818,18 @@ func (e *SearchEngine) searchRegex(pattern string, opts ports.SearchOptions) []H
 }
 
 // regexCandidateRefs extracts literal substrings from a regex pattern and
-// returns the union of their posting lists. Returns nil if no literals found.
-func (e *SearchEngine) regexCandidateRefs(pattern string) []ports.TokenRef {
+// returns the union of their posting lists.
+// Returns (nil, false) if no literals could be extracted (must full-scan).
+// Returns (nil, true) if literals were found but no posting list matches exist (can skip scan).
+// Returns (refs, true) if candidates were found.
+func (e *SearchEngine) regexCandidateRefs(pattern string) (refs []ports.TokenRef, hadLiterals bool) {
 	literals := extractRegexLiterals(pattern)
 	if len(literals) == 0 {
-		return nil
+		return nil, false
 	}
 
 	// Tokenize each literal and look up in the index
 	seen := make(map[ports.TokenRef]bool)
-	var refs []ports.TokenRef
 	for _, lit := range literals {
 		tokens := Tokenize(lit)
 		for _, tok := range tokens {
@@ -653,17 +852,14 @@ func (e *SearchEngine) regexCandidateRefs(pattern string) []ports.TokenRef {
 		}
 	}
 
-	if len(refs) == 0 {
-		return nil
-	}
-	return refs
+	return refs, true
 }
 
 // extractRegexLiterals is defined in content.go — uses regexp/syntax for
 // accurate literal extraction. Shared by both symbol and content regex search.
 
 // invertSymbolHits returns all symbols NOT in the matched set, respecting glob filters.
-func (e *SearchEngine) invertSymbolHits(matched []Hit, opts ports.SearchOptions) []Hit {
+func (e *SearchEngine) invertSymbolHits(matched []Hit, opts ports.SearchOptions, allowedFiles map[uint32]bool) []Hit {
 	// Build set of matched (fileID, line) pairs
 	type fileLine struct {
 		fileID uint32
@@ -677,6 +873,9 @@ func (e *SearchEngine) invertSymbolHits(matched []Hit, opts ports.SearchOptions)
 	// Collect all symbols NOT in the matched set
 	var inverted []Hit
 	for ref, sym := range e.idx.Metadata {
+		if allowedFiles != nil && !allowedFiles[ref.FileID] {
+			continue
+		}
 		if sym == nil {
 			continue
 		}
@@ -687,7 +886,7 @@ func (e *SearchEngine) invertSymbolHits(matched []Hit, opts ports.SearchOptions)
 		if file == nil {
 			continue
 		}
-		if !matchesAllGlobs(file.Path, opts) {
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 			continue
 		}
 		inverted = append(inverted, e.buildHit(ref, sym, file))
@@ -780,6 +979,22 @@ func matchesAllGlobs(path string, opts ports.SearchOptions) bool {
 	return true
 }
 
+// fileIDsMatchingGlob pre-computes the set of file IDs whose paths match the
+// include/exclude/exclude-dir globs. Returns nil when no globs are set (meaning
+// all files match). This turns O(n) per-ref glob checks into O(1) map lookups.
+func (e *SearchEngine) fileIDsMatchingGlob(opts ports.SearchOptions) map[uint32]bool {
+	if opts.IncludeGlob == "" && opts.ExcludeGlob == "" && opts.ExcludeDirGlob == "" {
+		return nil // no filtering needed
+	}
+	matched := make(map[uint32]bool)
+	for fileID, file := range e.idx.Files {
+		if matchesAllGlobs(file.Path, opts) {
+			matched[fileID] = true
+		}
+	}
+	return matched
+}
+
 // matchesGlobs applies include/exclude glob filters on the file path.
 // Uses fnmatch-like semantics where * matches path separators (unlike filepath.Match).
 func matchesGlobs(path, include, exclude string) bool {
@@ -843,7 +1058,7 @@ func fnmatchGlob(pattern, path string) bool {
 
 // filesWithoutMatch returns one hit per indexed file that is NOT in the matched set.
 // Respects include/exclude/exclude-dir glob filters from opts.
-func (e *SearchEngine) filesWithoutMatch(matched []Hit, opts ports.SearchOptions) []Hit {
+func (e *SearchEngine) filesWithoutMatch(matched []Hit, opts ports.SearchOptions, allowedFiles map[uint32]bool) []Hit {
 	matchedFiles := make(map[uint32]bool, len(matched))
 	for _, h := range matched {
 		matchedFiles[h.fileID] = true
@@ -854,7 +1069,10 @@ func (e *SearchEngine) filesWithoutMatch(matched []Hit, opts ports.SearchOptions
 		if matchedFiles[fileID] {
 			continue
 		}
-		if !matchesAllGlobs(file.Path, opts) {
+		if allowedFiles != nil && !allowedFiles[fileID] {
+			continue
+		}
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 			continue
 		}
 		hits = append(hits, Hit{

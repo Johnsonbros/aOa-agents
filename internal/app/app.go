@@ -600,13 +600,16 @@ func (a *App) Start() error {
 	if err := a.WebServer.Start(httpPort); err != nil {
 		fmt.Printf("[warning] HTTP dashboard unavailable: %v\n", err)
 	}
+	// Exclude paths that aOa itself writes — prevents reacting to our own I/O.
+	// L15.3: .aoa/ contains db, status, logs, hook output; .claude/settings.local.json
+	// is written by `aoa init`. Watching these creates noisy rapid-fire events.
+	a.Watcher.Exclude([]string{
+		filepath.Join(a.ProjectRoot, ".aoa") + string(filepath.Separator),
+		filepath.Join(a.ProjectRoot, ".claude", "settings.local.json"),
+	})
 	// Start file watcher — non-fatal if setup fails
 	if err := a.Watcher.Watch(a.ProjectRoot, a.onFileChanged); err != nil {
 		fmt.Printf("[warning] file watcher unavailable: %v\n", err)
-	}
-	// Watch .aoa/hook/ for context.jsonl and usage.txt (excluded by main ignore rules)
-	if err := a.Watcher.WatchExtra(a.Paths.HookDir); err != nil {
-		fmt.Printf("[warning] hook watcher unavailable: %v\n", err)
 	}
 	// Seed context snapshot from existing file (don't wait for next hook write)
 	if _, err := os.Stat(a.Paths.ContextJSONL); err == nil {

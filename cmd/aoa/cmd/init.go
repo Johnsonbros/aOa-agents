@@ -106,6 +106,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	fmt.Println("  Indexing project (typically under a minute)...")
 	idx, stats, err := app.BuildIndex(root, parser)
 	if err != nil {
 		store.Close()
@@ -556,18 +557,32 @@ const aOaGuidance = `
 <!-- aOa-guidance -->
 ## aOa — Semantic Search
 
-grep is shimmed to aOa. Results are **semantic**: ranked by session intent, scoped to methods.
+grep/egrep are shimmed to aOa. Results are **semantic**: ranked by session intent, scoped to methods.
 
-Each result line has a **peek code** (e.g. ` + "`9tzj`" + `) — a short identifier on the left.
-Run ` + "`aoa peek <code>`" + ` to see the full method body. Multiple codes in one call: ` + "`aoa peek 9tzj b2c1 a7e3`" + `.
+**Workflow: grep → peek → fan out. No file scanning needed.**
 
-**One grep + one peek = complete understanding. No file scanning needed.**
+### Search
+- Search by **function/type name**, not natural language. ` + "`grep monitorNodeHealth`" + ` not ` + "`grep \"detect dead node\"`" + `.
+- ` + "`grep symbolName`" + ` — symbol search (OR by default)
+- ` + "`egrep 'A|B|C'`" + ` — regex alternation
+- ` + "`grep -e pat1 -e pat2`" + ` — multi-pattern OR
+- ` + "`grep -m 10 pattern`" + ` — limit to N results
+- ` + "`grep/egrep pattern file.go`" + ` — falls back to real file search
 
-Result anatomy: ` + "`<peek> file:symbol[start-end]:line @domain #tag1 #tag2`" + `
-- ` + "`[start-end]`" + ` = method boundary. Read only that range if you use Read instead of peek.
-- ` + "`@domain`" + ` = semantic area (learned from your session).
-- ` + "`#tags`" + ` = scoping terms for the method.
-- ` + "`--`" + ` instead of a peek code = symbol too large for peek.
+### Inspect
+- ` + "`aoa peek <code>`" + ` — full method body from memory. Batch: ` + "`aoa peek a1 b2 c3`" + `
+- ` + "`aoa locate <name>`" + ` — find files by substring, instant
+- ` + "`aoa find <glob>`" + ` — find files by glob pattern
+- ` + "`aoa tree [dir] -d N`" + ` — directory tree to depth N
+- ` + "`aoa health`" + ` — daemon status, file count, uptime
+
+### Result anatomy
+` + "`<peek> file:symbol[start-end]:line @domain #tag1 #tag2`" + `
+- Peek code on left → ` + "`aoa peek <code>`" + ` for method body
+- ` + "`[start-end]`" + ` → method boundary (use as Read offset/limit if needed)
+- ` + "`@domain`" + ` → semantic area (learned from your session)
+- ` + "`#tags`" + ` → scoping keywords for the method
+- ` + "`--`" + ` → symbol too large for peek; use Read at that line
 <!-- /aOa-guidance -->
 `
 
