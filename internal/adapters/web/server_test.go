@@ -131,6 +131,10 @@ func (m *mockQueries) DimScanProgress() socket.DimScanProgress {
 	return socket.DimScanProgress{}
 }
 
+func (m *mockQueries) GenerateHints(query string, opts ports.SearchOptions) []string {
+	return nil
+}
+
 func newTestState() *ports.LearnerState {
 	return &ports.LearnerState{
 		PromptCount: 42,

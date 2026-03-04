@@ -42,6 +42,7 @@ type AppQueries interface {
 	ClearInvestigated()
 	UsageQuota() *UsageQuotaResult
 	DimScanProgress() DimScanProgress
+	GenerateHints(query string, opts ports.SearchOptions) []string
 }
 
 // Server is the daemon that listens on a Unix socket and serves search requests.
@@ -265,15 +266,16 @@ func (s *Server) handleSearch(req Request) Response {
 		}
 	}
 
-	return Response{
-		ID: req.ID,
-		Result: SearchResult{
-			Hits:     hits,
-			Count:    result.Count,
-			ExitCode: result.ExitCode,
-			Elapsed:  elapsed.String(),
-		},
+	sr := SearchResult{
+		Hits:     hits,
+		Count:    result.Count,
+		ExitCode: result.ExitCode,
+		Elapsed:  elapsed.String(),
 	}
+	if len(hits) == 0 && s.queries != nil {
+		sr.Hints = s.queries.GenerateHints(params.Query, params.Options)
+	}
+	return Response{ID: req.ID, Result: sr}
 }
 
 func (s *Server) handleHealth(req Request) Response {

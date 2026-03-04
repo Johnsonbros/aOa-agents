@@ -61,16 +61,14 @@ func formatSearchResult(result *socket.SearchResult, countOnly, quiet, noFilenam
 	hints := showHints()
 
 	var sb strings.Builder
-	// Extract query for contextual hints
-	var q string
-	if len(query) > 0 {
-		q = query[0]
-	}
 
 	if noColor {
 		if len(result.Hits) == 0 && hints {
 			sb.WriteString(fmt.Sprintf("aOa: 0 hits | 0 files\n"))
-			sb.WriteString(buildZeroResultHint(q))
+			if len(result.Hints) > 0 {
+				sb.WriteString(strings.Join(result.Hints, "\n"))
+				sb.WriteString("\n")
+			}
 		} else if peek {
 			sb.WriteString(fmt.Sprintf("aOa: %d hits | %d files | %d lines in ranges\n",
 				len(result.Hits), len(fileSet), totalRangeLines))
@@ -80,7 +78,10 @@ func formatSearchResult(result *socket.SearchResult, countOnly, quiet, noFilenam
 		}
 	} else if len(result.Hits) == 0 && hints {
 		sb.WriteString(fmt.Sprintf("%s⚡ 0 hits%s\n", cBold, cReset))
-		sb.WriteString(buildZeroResultHint(q))
+		if len(result.Hints) > 0 {
+			sb.WriteString(strings.Join(result.Hints, "\n"))
+			sb.WriteString("\n")
+		}
 	} else if peek {
 		sb.WriteString(fmt.Sprintf("%s⚡ %d hits%s │ %d files │ %d lines in ranges │ %s\n",
 			cBold, len(result.Hits), cReset, len(fileSet), totalRangeLines, result.Elapsed))

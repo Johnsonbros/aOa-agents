@@ -74,6 +74,7 @@ type SearchResult struct {
 	Count    int         `json:"count"`
 	ExitCode int         `json:"exit_code"`
 	Elapsed  string      `json:"elapsed"`
+	Hints    []string    `json:"hints,omitempty"`
 }
 
 // SearchHit is a single hit in search results (wire format).

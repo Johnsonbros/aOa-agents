@@ -24,6 +24,7 @@ import (
 	"github.com/corey/aoa/internal/adapters/web"
 	"github.com/corey/aoa/internal/domain/analyzer"
 	"github.com/corey/aoa/internal/domain/enricher"
+	"github.com/corey/aoa/internal/domain/hints"
 	"github.com/corey/aoa/internal/domain/index"
 	"github.com/corey/aoa/internal/domain/learner"
 	"github.com/corey/aoa/internal/domain/status"
@@ -211,6 +212,7 @@ type App struct {
 	WebServer *web.Server
 	Reader    *claude.Reader
 	Index     *ports.Index
+	hintGen   *hints.Generator
 
 	dimEngine      any                    // *recon.Engine in full builds, nil in lean
 	dimRules       []analyzer.Rule         // loaded from YAML at startup
@@ -400,6 +402,8 @@ func New(cfg Config) (*App, error) {
 	// Status line goes alongside the DB in .aoa/
 	statusPath := paths.Status
 
+	hg := hints.New(enr)
+
 	a := &App{
 		ProjectRoot:    cfg.ProjectRoot,
 		ProjectID:      cfg.ProjectID,
@@ -407,6 +411,7 @@ func New(cfg Config) (*App, error) {
 		Store:          store,
 		Watcher:        watcher,
 		Enricher:       enr,
+		hintGen:        hg,
 		debug:          cfg.Debug || os.Getenv("AOA_DEBUG") == "1",
 		Engine:         engine,
 		Learner:        lrn,
@@ -1764,6 +1769,18 @@ func (a *App) UsageQuota() *socket.UsageQuotaResult {
 	}
 
 	return result
+}
+
+// GenerateHints produces zero-result hints for a search query.
+// Implements socket.AppQueries.
+func (a *App) GenerateHints(query string, opts ports.SearchOptions) []string {
+	if a.hintGen == nil {
+		return nil
+	}
+	return a.hintGen.Generate(hints.HintContext{
+		Query:   query,
+		AndMode: opts.AndMode,
+	})
 }
 
 // LearnerSnapshot returns a deep copy of the current learner state.
