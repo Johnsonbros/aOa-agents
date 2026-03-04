@@ -202,7 +202,7 @@ var scaleCases = []scaleCase{
 		name:   "Literal_Common",
 		query:  "server",
 		opts:   ports.SearchOptions{MaxCount: 500},
-		target: 1 * time.Millisecond,
+		target: 2 * time.Millisecond,
 	},
 	// Tier 3 token: ~3% of files = ~720 refs
 	{

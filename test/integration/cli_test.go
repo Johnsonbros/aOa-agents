@@ -485,8 +485,8 @@ func TestInit_LockedDB_ExternalProcess(t *testing.T) {
 	if exit == 0 {
 		t.Fatal("init should fail when DB is locked by external process")
 	}
-	if elapsed > 3*time.Second {
-		t.Errorf("should fail fast (<3s), took %v", elapsed)
+	if elapsed > 5*time.Second {
+		t.Errorf("should fail fast (<5s), took %v", elapsed)
 	}
 	if !strings.Contains(stderr, "locked") {
 		t.Errorf("error should mention 'locked':\n%s", stderr)

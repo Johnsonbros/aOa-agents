@@ -52,6 +52,7 @@ type Server struct {
 	listener net.Listener
 	sockPath string
 	started  time.Time
+	logFn    func(string, ...interface{}) // optional error logger
 
 	done         chan struct{}
 	shutdownCh   chan struct{} // closed when a remote shutdown request is received
@@ -70,6 +71,18 @@ func NewServer(engine *index.SearchEngine, idx *ports.Index, sockPath string, qu
 		sockPath:   sockPath,
 		done:       make(chan struct{}),
 		shutdownCh: make(chan struct{}),
+	}
+}
+
+// SetLogFn sets a logger for server errors (writeResponse failures, connection errors).
+// Lazy formatting — no allocations on success paths.
+func (s *Server) SetLogFn(fn func(string, ...interface{})) {
+	s.logFn = fn
+}
+
+func (s *Server) logErr(format string, args ...interface{}) {
+	if s.logFn != nil {
+		s.logFn(format, args...)
 	}
 }
 
@@ -148,6 +161,10 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer s.wg.Done()
 	defer conn.Close()
 
+	// Prevent goroutine leak from clients that connect but never send.
+	// 10s is 100x the normal case (<100ms round-trip).
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB max message
 
@@ -156,6 +173,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		if len(line) == 0 {
 			continue
 		}
+
+		// Refresh deadline after each successful read.
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
 		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
@@ -176,6 +196,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		if req.Method == MethodShutdown {
 			return
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		s.logErr("connection read: %v", err)
 	}
 }
 
@@ -512,8 +535,11 @@ func (s *Server) handleWipe(req Request) Response {
 func (s *Server) writeResponse(conn net.Conn, resp Response) {
 	data, err := json.Marshal(resp)
 	if err != nil {
+		s.logErr("marshal response: %v", err)
 		return
 	}
 	data = append(data, '\n')
-	conn.Write(data)
+	if _, err := conn.Write(data); err != nil {
+		s.logErr("write response: %v", err)
+	}
 }

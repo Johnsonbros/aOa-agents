@@ -204,8 +204,21 @@ func (c *Client) Wipe() error {
 	return err
 }
 
-// Ping checks if the daemon is reachable.
+// Ping checks if the daemon is alive via an application-level health round-trip.
+// Returns true only if the daemon responds to a health request within 1 second.
+// Detects zombie daemons where the socket accepts connections but the accept loop is dead.
 func (c *Client) Ping() bool {
+	_, err := c.callWithTimeout(Request{
+		ID:     "ping",
+		Method: MethodHealth,
+	}, 1*time.Second)
+	return err == nil
+}
+
+// PingTCP checks if the daemon socket is connectable (TCP-level only).
+// Faster than Ping() but cannot detect zombie daemons. Used for startup
+// polling where speed matters and the daemon was just spawned.
+func (c *Client) PingTCP() bool {
 	conn, err := net.DialTimeout("unix", c.sockPath, 500*time.Millisecond)
 	if err != nil {
 		return false

@@ -725,7 +725,9 @@ func (a *App) markIndexDirty() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if a.indexDirty {
-			_ = a.Store.SaveIndex(a.ProjectID, a.Index)
+			if err := a.Store.SaveIndex(a.ProjectID, a.Index); err != nil {
+				a.debugf("SaveIndex error: %v", err)
+			}
 			a.indexDirty = false
 		}
 	})
@@ -739,7 +741,9 @@ func (a *App) flushIndex() {
 		a.indexSaveTimer = nil
 	}
 	if a.indexDirty {
-		_ = a.Store.SaveIndex(a.ProjectID, a.Index)
+		if err := a.Store.SaveIndex(a.ProjectID, a.Index); err != nil {
+			a.debugf("flushIndex error: %v", err)
+		}
 		a.indexDirty = false
 	}
 }

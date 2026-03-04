@@ -157,7 +157,7 @@ func spawnDaemon(root, sockPath string) (string, error) {
 			return "", fmt.Errorf("daemon failed to start\n  → check log: %s", paths.DaemonLog)
 		default:
 		}
-		if client.Ping() {
+		if client.PingTCP() {
 			dashURL := ""
 			if portData, err := os.ReadFile(paths.PortFile); err == nil {
 				dashURL = "http://localhost:" + strings.TrimSpace(string(portData))
@@ -187,8 +187,11 @@ func readLogTail(path string, n int) string {
 // It opens the database, starts the socket server, and blocks until a signal
 // or remote shutdown arrives. All output goes to .aoa/daemon.log.
 func runDaemonLoop(root, sockPath string) error {
+	// Cap daemon log at 2MB to prevent disk fill. Pre-spawn rotation
+	// (in spawnDaemon) resets on each daemon restart.
+	capped := newCappedWriter(os.Stdout, 2*1024*1024)
 	logf := func(format string, args ...interface{}) {
-		fmt.Printf("[%s] "+format+"\n", append([]interface{}{time.Now().Format(time.RFC3339)}, args...)...)
+		fmt.Fprintf(capped, "[%s] "+format+"\n", append([]interface{}{time.Now().Format(time.RFC3339)}, args...)...)
 	}
 
 	a, err := app.New(app.Config{ProjectRoot: root, Parser: newParser(root)})
@@ -200,6 +203,9 @@ func runDaemonLoop(root, sockPath string) error {
 		logf("error: %v", err)
 		return fmt.Errorf("init: %w", err)
 	}
+
+	// Wire error logger to socket server before starting.
+	a.Server.SetLogFn(logf)
 
 	if err := a.Start(); err != nil {
 		logf("error: %v", err)
@@ -229,6 +235,34 @@ func runDaemonLoop(root, sockPath string) error {
 			r.TotalTime, r.FileCount, r.TokenCount, r.IndexTime, r.CacheTime, reconPart)
 	})
 
+	// In-process watchdog: health check every 20s via real Ping().
+	// 3 consecutive failures = zombie detected, trigger clean shutdown.
+	watchdogCh := make(chan struct{})
+	a.SafeGo("watchdog", func() {
+		client := socket.NewClient(sockPath)
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		var failures int
+		for {
+			select {
+			case <-a.StopCh():
+				return
+			case <-ticker.C:
+				if client.Ping() {
+					failures = 0
+				} else {
+					failures++
+					logf("watchdog: health ping failed (%d/3)", failures)
+					if failures >= 3 {
+						logf("watchdog: 3 consecutive failures — triggering shutdown")
+						close(watchdogCh)
+						return
+					}
+				}
+			}
+		}
+	})
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -237,6 +271,8 @@ func runDaemonLoop(root, sockPath string) error {
 		logf("stopped (signal)")
 	case <-a.Server.ShutdownCh():
 		logf("stopped (remote)")
+	case <-watchdogCh:
+		logf("stopped (watchdog)")
 	}
 
 	err = a.Stop()
