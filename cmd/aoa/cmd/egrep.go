@@ -10,29 +10,31 @@ import (
 )
 
 var (
-	egrepCountOnly     bool
-	egrepQuiet         bool
-	egrepInvertMatch   bool
-	egrepMaxCount      int
-	egrepPatterns      []string
-	egrepIncludeGlob   string
-	egrepExcludeGlob   string
-	egrepCaseInsens    bool
-	egrepWordBound     bool
-	egrepAndMode       bool
-	egrepExcludeDir    string
-	egrepOnlyMatch     bool
-	egrepFilesNoMatch  bool
-	egrepNoFilename    bool
-	egrepNoColor       bool
-	egrepAfterCtx      int
-	egrepBeforeCtx     int
-	egrepContext        int
-	egrepRecursive     bool
-	egrepLineNumber    bool
-	egrepWithFilename  bool
-	egrepFilesMatch    bool
-	egrepColor         string
+	egrepCountOnly      bool
+	egrepQuiet          bool
+	egrepInvertMatch    bool
+	egrepMaxCount       int
+	egrepPatterns       []string
+	egrepIncludeGlob    string
+	egrepExcludeGlob    string
+	egrepCaseInsens     bool
+	egrepWordBound      bool
+	egrepAndMode        bool
+	egrepExcludeDir     string
+	egrepOnlyMatch      bool
+	egrepFilesNoMatch   bool
+	egrepNoFilename     bool
+	egrepNoColor        bool
+	egrepAfterCtx       int
+	egrepBeforeCtx      int
+	egrepContext         int
+	egrepRecursive      bool
+	egrepLineNumber     bool
+	egrepWithFilename   bool
+	egrepFilesMatch     bool
+	egrepColor          string
+	egrepClaudeGuidance bool
+	egrepScope          string
 )
 
 var egrepCmd = &cobra.Command{
@@ -72,9 +74,15 @@ func init() {
 	f.BoolVarP(&egrepFilesMatch, "files-with-matches", "l", false, "Print only filenames of matching files")
 	f.BoolVar(&egrepNoFilename, "no-filename", false, "Suppress filename prefix")
 	f.StringVar(&egrepColor, "color", "auto", "Color output: auto, always, never")
+	f.BoolVar(&egrepClaudeGuidance, "claude-guidance", false, "Print detailed search guidance for AI agents")
+	f.StringVar(&egrepScope, "scope", "", "Filter index results by file path substring (e.g. --scope controller/foo)")
 }
 
 func runEgrep(cmd *cobra.Command, args []string) error {
+	if egrepClaudeGuidance {
+		fmt.Print(claudeGuidanceText)
+		return nil
+	}
 	// 1. Parse pattern vs file args
 	pattern, fileArgs, _, err := parseGrepArgs(args, egrepPatterns)
 	if err != nil {
@@ -146,6 +154,7 @@ func runEgrepIndex(pattern string, useColor bool) error {
 		AfterContext:       egrepAfterCtx,
 		BeforeContext:      egrepBeforeCtx,
 		Context:            egrepContext,
+		Scope:             egrepScope,
 	}
 	if egrepCaseInsens {
 		opts.Mode = "case_insensitive"
@@ -167,8 +176,10 @@ func runEgrepIndex(pattern string, useColor bool) error {
 		return err
 	}
 
-	if isStdoutTTY() && useColor {
-		fmt.Print(formatSearchResult(result, opts.CountOnly, opts.Quiet, egrepNoFilename, false))
+	if isShimMode() {
+		fmt.Print(formatSearchResult(result, opts.CountOnly, opts.Quiet, egrepNoFilename, true, pattern))
+	} else if isStdoutTTY() && useColor {
+		fmt.Print(formatSearchResult(result, opts.CountOnly, opts.Quiet, egrepNoFilename, false, pattern))
 	} else {
 		fmt.Print(formatGrepCompat(result, egrepLineNumber, egrepNoFilename, egrepFilesMatch, egrepCountOnly, egrepQuiet))
 	}

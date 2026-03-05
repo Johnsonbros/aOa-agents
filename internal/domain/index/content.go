@@ -37,29 +37,36 @@ type contentFileLine struct {
 // Regex queries extract literal substrings for trigram narrowing, then verify with regex.
 // Falls back to brute-force only for short queries, InvertMatch, or queries without literals.
 // Tags are deferred (nil) and filled after MaxCount truncation by fillContentTags.
-func (e *SearchEngine) scanFileContents(query string, opts ports.SearchOptions, symbolHits []Hit) []Hit {
+// allowedFiles, when non-nil, restricts scanning to pre-computed matching file IDs.
+func (e *SearchEngine) scanFileContents(query string, opts ports.SearchOptions, symbolHits []Hit, allowedFiles map[uint32]bool) []Hit {
 	if e.cache == nil || !e.cache.HasTrigramIndex() {
-		return e.scanContentBruteForce(query, opts, symbolHits)
+		return e.scanContentBruteForce(query, opts, symbolHits, allowedFiles)
 	}
 
 	// InvertMatch needs full scan (finding what DOESN'T match)
 	if opts.InvertMatch {
-		return e.scanContentBruteForce(query, opts, symbolHits)
+		return e.scanContentBruteForce(query, opts, symbolHits, allowedFiles)
 	}
 
 	// Regex: extract literals for trigram narrowing, verify with compiled regex
 	if opts.Mode == "regex" {
-		return e.scanContentRegexTrigram(query, opts, symbolHits)
+		return e.scanContentRegexTrigram(query, opts, symbolHits, allowedFiles)
 	}
 
-	// Literal/AND/word-boundary modes
+	// Word boundary with long-enough query: use trigram narrowing + word-boundary verification.
+	// This avoids brute-force O(all-files) scanning for -w queries like "PreEnqueue".
+	if opts.WordBoundary && len(query) >= 3 {
+		return e.scanContentWordBoundaryTrigram(query, opts, symbolHits, allowedFiles)
+	}
+
+	// AND mode or short word-boundary queries: brute-force
 	if opts.WordBoundary || opts.AndMode {
-		return e.scanContentBruteForce(query, opts, symbolHits)
+		return e.scanContentBruteForce(query, opts, symbolHits, allowedFiles)
 	}
 	if len(query) >= 3 {
-		return e.scanContentTrigram(query, opts, symbolHits)
+		return e.scanContentTrigram(query, opts, symbolHits, allowedFiles)
 	}
-	return e.scanContentBruteForce(query, opts, symbolHits)
+	return e.scanContentBruteForce(query, opts, symbolHits, allowedFiles)
 }
 
 // scanContentRegexTrigram uses literal extraction from regex patterns to narrow
@@ -67,7 +74,7 @@ func (e *SearchEngine) scanFileContents(query string, opts ports.SearchOptions, 
 // For concatenation (func.*Observer): intersects trigram results (both must appear).
 // For alternation (A|B|C): unions trigram candidates across branches.
 // Falls back to brute-force only when no usable literals can be extracted.
-func (e *SearchEngine) scanContentRegexTrigram(pattern string, opts ports.SearchOptions, symbolHits []Hit) []Hit {
+func (e *SearchEngine) scanContentRegexTrigram(pattern string, opts ports.SearchOptions, symbolHits []Hit, allowedFiles map[uint32]bool) []Hit {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil
@@ -76,7 +83,7 @@ func (e *SearchEngine) scanContentRegexTrigram(pattern string, opts ports.Search
 	// Extract structured literal group preserving concat vs alternation
 	group := extractRegexLiteralGroup(pattern)
 	if group == nil {
-		return e.scanContentBruteForce(pattern, opts, symbolHits)
+		return e.scanContentBruteForce(pattern, opts, symbolHits, allowedFiles)
 	}
 
 	allCandidates := e.resolveLiteralGroup(group)
@@ -92,6 +99,10 @@ func (e *SearchEngine) scanContentRegexTrigram(pattern string, opts ports.Search
 
 	var hits []Hit
 	for _, cand := range allCandidates {
+		if allowedFiles != nil && !allowedFiles[cand.FileID] {
+			continue
+		}
+
 		lineNum := int(cand.LineNum)
 		lineIdx := lineNum - 1
 
@@ -104,7 +115,7 @@ func (e *SearchEngine) scanContentRegexTrigram(pattern string, opts ports.Search
 		if file == nil || file.Size > maxContentFileSize {
 			continue
 		}
-		if !matchesAllGlobs(file.Path, opts) {
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 			continue
 		}
 
@@ -324,11 +335,11 @@ func extractTrigrams(lowerQuery string) [][3]byte {
 
 // scanContentTrigram uses the trigram index to find candidate lines, then verifies
 // each candidate with the appropriate matcher (case-sensitive or case-insensitive).
-func (e *SearchEngine) scanContentTrigram(query string, opts ports.SearchOptions, symbolHits []Hit) []Hit {
+func (e *SearchEngine) scanContentTrigram(query string, opts ports.SearchOptions, symbolHits []Hit, allowedFiles map[uint32]bool) []Hit {
 	lowerQuery := strings.ToLower(query)
 	trigrams := extractTrigrams(lowerQuery)
 	if len(trigrams) == 0 {
-		return e.scanContentBruteForce(query, opts, symbolHits)
+		return e.scanContentBruteForce(query, opts, symbolHits, allowedFiles)
 	}
 
 	candidates := e.cache.TrigramLookup(trigrams)
@@ -345,6 +356,10 @@ func (e *SearchEngine) scanContentTrigram(query string, opts ports.SearchOptions
 
 	var hits []Hit
 	for _, cand := range candidates {
+		if allowedFiles != nil && !allowedFiles[cand.FileID] {
+			continue
+		}
+
 		lineNum := int(cand.LineNum)
 		lineIdx := lineNum - 1
 
@@ -357,7 +372,7 @@ func (e *SearchEngine) scanContentTrigram(query string, opts ports.SearchOptions
 		if file == nil || file.Size > maxContentFileSize {
 			continue
 		}
-		if !matchesAllGlobs(file.Path, opts) {
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
 			continue
 		}
 
@@ -389,11 +404,82 @@ func (e *SearchEngine) scanContentTrigram(query string, opts ports.SearchOptions
 	return hits
 }
 
+// scanContentWordBoundaryTrigram uses trigram narrowing for word-boundary (-w)
+// content search. Narrows candidates via trigram index, then verifies each
+// candidate with a word-boundary regex. This avoids O(all-files) brute-force
+// for queries like "PreEnqueue" that produce few trigram candidates.
+func (e *SearchEngine) scanContentWordBoundaryTrigram(query string, opts ports.SearchOptions, symbolHits []Hit, allowedFiles map[uint32]bool) []Hit {
+	lowerQuery := strings.ToLower(query)
+	trigrams := extractTrigrams(lowerQuery)
+	if len(trigrams) == 0 {
+		return e.scanContentBruteForce(query, opts, symbolHits, allowedFiles)
+	}
+
+	candidates := e.cache.TrigramLookup(trigrams)
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Build the word-boundary matcher for verification
+	wbMatcher := buildContentMatcher(query, opts)
+	if wbMatcher == nil {
+		return nil
+	}
+
+	dedup := make(map[contentFileLine]bool, len(symbolHits))
+	for _, h := range symbolHits {
+		dedup[contentFileLine{h.fileID, h.Line}] = true
+	}
+
+	var hits []Hit
+	for _, cand := range candidates {
+		if allowedFiles != nil && !allowedFiles[cand.FileID] {
+			continue
+		}
+
+		lineNum := int(cand.LineNum)
+		lineIdx := lineNum - 1
+
+		fl := contentFileLine{cand.FileID, lineNum}
+		if dedup[fl] {
+			continue
+		}
+
+		file := e.idx.Files[cand.FileID]
+		if file == nil || file.Size > maxContentFileSize {
+			continue
+		}
+		if allowedFiles == nil && !matchesAllGlobs(file.Path, opts) {
+			continue
+		}
+
+		lines := e.cache.GetLines(cand.FileID)
+		if lines == nil || lineIdx >= len(lines) {
+			continue
+		}
+
+		// Verify with word-boundary matcher (trigram index only does substring matching)
+		if !wbMatcher(lines[lineIdx]) {
+			continue
+		}
+
+		dedup[fl] = true
+		spans := e.fileSpans[cand.FileID]
+		hit := e.buildContentHit(cand.FileID, file.Path, lineNum, lines[lineIdx], spans)
+		hits = append(hits, hit)
+	}
+
+	sortByFileIDLine(hits)
+	return hits
+}
+
 // scanContentBruteForce is the full-scan path: iterates every line of
 // every cached/on-disk file running a matcher function per line.
 // When pre-lowered lines are available and mode is case-insensitive,
 // uses strings.Contains on lowered lines instead of per-byte case folding.
-func (e *SearchEngine) scanContentBruteForce(query string, opts ports.SearchOptions, symbolHits []Hit) []Hit {
+// allowedFiles, when non-nil, restricts iteration to only matching file IDs,
+// avoiding O(all-files) iteration when a glob narrows the set to a few files.
+func (e *SearchEngine) scanContentBruteForce(query string, opts ports.SearchOptions, symbolHits []Hit, allowedFiles map[uint32]bool) []Hit {
 	dedup := make(map[contentFileLine]bool, len(symbolHits))
 	for _, h := range symbolHits {
 		dedup[contentFileLine{h.fileID, h.Line}] = true
@@ -411,60 +497,86 @@ func (e *SearchEngine) scanContentBruteForce(query string, opts ports.SearchOpti
 
 	var hits []Hit
 
-	for fileID, file := range e.idx.Files {
-		if file.Size > maxContentFileSize {
-			continue
-		}
-		if !matchesAllGlobs(file.Path, opts) {
-			continue
-		}
-
-		var lines []string
-		if e.cache != nil {
-			lines = e.cache.GetLines(fileID)
-		}
-		if lines == nil {
-			lines = readFileLines(filepath.Join(e.projectRoot, file.Path))
-			if lines == nil {
+	// When allowedFiles is set, iterate only those files instead of all files.
+	// On a 24K-file repo with --include narrowing to 5 files, this turns
+	// O(24K) iteration into O(5) direct lookups.
+	if allowedFiles != nil {
+		for fileID := range allowedFiles {
+			file := e.idx.Files[fileID]
+			if file == nil || file.Size > maxContentFileSize {
 				continue
 			}
+			e.bruteForceOneFile(fileID, file, matcher, useLowerOpt, lowerQuery, opts, dedup, &hits)
 		}
-
-		// Get pre-lowered lines when available for faster case-insensitive matching
-		var lowerLines []string
-		if useLowerOpt {
-			lowerLines = e.cache.GetLowerLines(fileID)
-		}
-
-		spans := e.fileSpans[fileID]
-
-		for lineIdx, line := range lines {
-			lineNum := lineIdx + 1
-			var matched bool
-			if lowerLines != nil && lineIdx < len(lowerLines) {
-				matched = strings.Contains(lowerLines[lineIdx], lowerQuery)
-			} else {
-				matched = matcher(line)
-			}
-			if opts.InvertMatch {
-				matched = !matched
-			}
-			if !matched {
+	} else {
+		for fileID, file := range e.idx.Files {
+			if file.Size > maxContentFileSize {
 				continue
 			}
-			fl := contentFileLine{fileID, lineNum}
-			if dedup[fl] {
+			if !matchesAllGlobs(file.Path, opts) {
 				continue
 			}
-			dedup[fl] = true
-
-			hit := e.buildContentHit(fileID, file.Path, lineNum, line, spans)
-			hits = append(hits, hit)
+			e.bruteForceOneFile(fileID, file, matcher, useLowerOpt, lowerQuery, opts, dedup, &hits)
 		}
 	}
 
 	sortByFileIDLine(hits)
 	return hits
+}
+
+// bruteForceOneFile scans a single file's lines with the given matcher.
+// Extracted to avoid duplicating the inner loop for the two iteration strategies
+// (allowedFiles vs all-files) in scanContentBruteForce.
+func (e *SearchEngine) bruteForceOneFile(
+	fileID uint32, file *ports.FileMeta,
+	matcher func(string) bool,
+	useLowerOpt bool, lowerQuery string,
+	opts ports.SearchOptions,
+	dedup map[contentFileLine]bool,
+	hits *[]Hit,
+) {
+	var lines []string
+	if e.cache != nil {
+		lines = e.cache.GetLines(fileID)
+	}
+	if lines == nil {
+		lines = readFileLines(filepath.Join(e.projectRoot, file.Path))
+		if lines == nil {
+			return
+		}
+	}
+
+	// Get pre-lowered lines when available for faster case-insensitive matching
+	var lowerLines []string
+	if useLowerOpt {
+		lowerLines = e.cache.GetLowerLines(fileID)
+	}
+
+	spans := e.fileSpans[fileID]
+
+	for lineIdx, line := range lines {
+		lineNum := lineIdx + 1
+		var matched bool
+		if lowerLines != nil && lineIdx < len(lowerLines) {
+			matched = strings.Contains(lowerLines[lineIdx], lowerQuery)
+		} else {
+			matched = matcher(line)
+		}
+		if opts.InvertMatch {
+			matched = !matched
+		}
+		if !matched {
+			continue
+		}
+		fl := contentFileLine{fileID, lineNum}
+		if dedup[fl] {
+			continue
+		}
+		dedup[fl] = true
+
+		hit := e.buildContentHit(fileID, file.Path, lineNum, line, spans)
+		*hits = append(*hits, hit)
+	}
 }
 
 // buildContentHit constructs a content Hit with enclosing symbol context.

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"github.com/corey/aoa/internal/adapters/web"
 	"github.com/corey/aoa/internal/domain/analyzer"
 	"github.com/corey/aoa/internal/domain/enricher"
+	"github.com/corey/aoa/internal/domain/hints"
 	"github.com/corey/aoa/internal/domain/index"
 	"github.com/corey/aoa/internal/domain/learner"
 	"github.com/corey/aoa/internal/domain/status"
@@ -76,6 +79,13 @@ type TurnAction struct {
 	Pattern     string // L9.2: search pattern (Grep/Glob)
 	FilePath    string // L9.2: file path (Read/Write/Edit)
 	Command     string // L9.2: shell command (Bash)
+
+	// Subagent telemetry (Agent tool only)
+	SubagentTokens     int          // total_tokens from agent completion
+	SubagentToolUses   int          // tool_uses from agent completion
+	SubagentDurationMs int64        // duration_ms from agent completion
+	SubagentType       string       // "Explore", "beacon", "general-purpose"
+	Children           []TurnAction // nested tool calls from subagent
 }
 
 // ConversationTurn describes a single turn in the conversation feed.
@@ -154,6 +164,38 @@ type ContextSnapshot struct {
 	Version            string  `json:"version"`
 }
 
+// subagentUsageRE parses usage stats from Agent tool_result text.
+// Format: total_tokens: 104234 tool_uses: 43 duration_ms: 37200
+var subagentUsageRE = regexp.MustCompile(`(?:total_tokens|tool_uses|duration_ms):\s*(\d+)`)
+
+// subagentIDRE extracts the agent ID from Agent tool_result text.
+// The ID appears as part of the output file path or agent metadata.
+var subagentIDRE = regexp.MustCompile(`agent[_-](?:id:?\s*)?([a-f0-9-]{8,})`)
+
+// parseSubagentUsage extracts total_tokens, tool_uses, and duration_ms from
+// Agent tool_result text containing <usage> tags or inline usage stats.
+func parseSubagentUsage(text string) (tokens, toolUses int, durationMs int64) {
+	for _, m := range subagentUsageRE.FindAllStringSubmatch(text, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		val, err := strconv.ParseInt(m[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		prefix := m[0]
+		switch {
+		case strings.HasPrefix(prefix, "total_tokens:"):
+			tokens = int(val)
+		case strings.HasPrefix(prefix, "tool_uses:"):
+			toolUses = int(val)
+		case strings.HasPrefix(prefix, "duration_ms:"):
+			durationMs = val
+		}
+	}
+	return
+}
+
 // App is the top-level container wiring all components together.
 type App struct {
 	ProjectRoot string
@@ -170,6 +212,7 @@ type App struct {
 	WebServer *web.Server
 	Reader    *claude.Reader
 	Index     *ports.Index
+	hintGen   *hints.Generator
 
 	dimEngine      any                    // *recon.Engine in full builds, nil in lean
 	dimRules       []analyzer.Rule         // loaded from YAML at startup
@@ -182,10 +225,17 @@ type App struct {
 	dimCache     map[string]*socket.DimensionalFileResult
 	dimCacheSet  bool // true once loaded (distinguishes nil "no data" from "not loaded")
 
+	// Dim scan progress (atomic — read from HTTP handlers without locking)
+	dimScanTotal   int64 // total files to scan
+	dimScanDone    int64 // files completed so far
+	dimScanCached  int64 // files loaded from persisted cache
+	dimScanRunning int32 // 1 while scan is in progress
+	dimScanStarted int64 // unix nano when scan started
+
 	// Investigated files (user-triaged, excluded from active recon view)
 	investigatedFiles map[string]int64 // relPath -> unix timestamp
 	promptN        uint32                 // prompt counter (incremented on each user input)
-	lastAutotune   *learner.AutotuneResult // most recent autotune result (for status line)
+	lastAutotune   *ports.AutotuneResult // most recent autotune result (for status line)
 	statusLinePath string                 // project-local path for status line file
 	httpPort       int                    // preferred HTTP port (0 = auto from project root)
 	dbPath         string                 // path to bbolt database file
@@ -223,6 +273,10 @@ type App struct {
 	shadowRing    ShadowRing             // ring buffer of shadow comparison results
 	shadowPending map[string]*ToolShadow // toolID → pending shadow (awaiting result)
 
+	// Subagent telemetry — correlate subagent tool calls to parent Agent actions
+	subagentToToolID map[string]string       // subagentID → parent Agent ToolID
+	subagentChildren map[string][]TurnAction // parent Agent ToolID → accumulated child actions
+
 	// Value engine fields (L0.3)
 	currentModel          string // model from most recent event
 	counterfactTokensSaved int64  // lifetime tokens saved by aOa-guided reads
@@ -246,6 +300,15 @@ type App struct {
 	// only the bbolt write is delayed to avoid 306MB rewrites on every file change.
 	indexDirty     bool
 	indexSaveTimer *time.Timer
+
+	// Cached learner snapshot (L11.8) — avoids serializing under mu on every HTTP request.
+	// Multiple dashboard handlers in the same poll cycle share one snapshot.
+	cachedSnapshot     *ports.LearnerState
+	cachedSnapshotTime time.Time
+
+	// Goroutine lifecycle (L11.1): all background goroutines tracked for clean shutdown.
+	bgWg   sync.WaitGroup // tracks all safeGo goroutines
+	stopCh chan struct{}   // closed on Stop() to signal background goroutines
 }
 
 // Config holds initialization parameters for the App.
@@ -339,6 +402,8 @@ func New(cfg Config) (*App, error) {
 	// Status line goes alongside the DB in .aoa/
 	statusPath := paths.Status
 
+	hg := hints.New(enr)
+
 	a := &App{
 		ProjectRoot:    cfg.ProjectRoot,
 		ProjectID:      cfg.ProjectID,
@@ -346,6 +411,7 @@ func New(cfg Config) (*App, error) {
 		Store:          store,
 		Watcher:        watcher,
 		Enricher:       enr,
+		hintGen:        hg,
 		debug:          cfg.Debug || os.Getenv("AOA_DEBUG") == "1",
 		Engine:         engine,
 		Learner:        lrn,
@@ -362,17 +428,23 @@ func New(cfg Config) (*App, error) {
 		},
 		turnBuffer:          make(map[string]*turnBuilder),
 		shadowPending:       make(map[string]*ToolShadow),
+		subagentToToolID:    make(map[string]string),
+		subagentChildren:    make(map[string][]TurnAction),
 		burnRate:            NewBurnRateTracker(5 * time.Minute),
 		burnRateCounterfact: NewBurnRateTracker(5 * time.Minute),
 		rateTracker:         NewRateTracker(30 * time.Minute),
+		stopCh:              make(chan struct{}),
 	}
+
+	// Create search adapter for ports.Searcher interface
+	searcher := index.NewSearchAdapter(engine)
 
 	// Create server with App as query provider (for domains, stats, etc.)
 	sockPath := socket.SocketPath(cfg.ProjectRoot)
-	a.Server = socket.NewServer(engine, idx, sockPath, a)
+	a.Server = socket.NewServer(searcher, idx, sockPath, a)
 
-	// Create HTTP server for web dashboard
-	a.WebServer = web.NewServer(a, idx, engine, paths.PortFile)
+	// Create HTTP server for web dashboard (pass file cache for source line serving)
+	a.WebServer = web.NewServer(a, idx, cache, paths.PortFile)
 
 	// Wire search observer: search results → learning signals
 	engine.SetObserver(a.searchObserver)
@@ -583,13 +655,16 @@ func (a *App) Start() error {
 	if err := a.WebServer.Start(httpPort); err != nil {
 		fmt.Printf("[warning] HTTP dashboard unavailable: %v\n", err)
 	}
+	// Exclude paths that aOa itself writes — prevents reacting to our own I/O.
+	// L15.3: .aoa/ contains db, status, logs, hook output; .claude/settings.local.json
+	// is written by `aoa init`. Watching these creates noisy rapid-fire events.
+	a.Watcher.Exclude([]string{
+		filepath.Join(a.ProjectRoot, ".aoa") + string(filepath.Separator),
+		filepath.Join(a.ProjectRoot, ".claude", "settings.local.json"),
+	})
 	// Start file watcher — non-fatal if setup fails
 	if err := a.Watcher.Watch(a.ProjectRoot, a.onFileChanged); err != nil {
 		fmt.Printf("[warning] file watcher unavailable: %v\n", err)
-	}
-	// Watch .aoa/hook/ for context.jsonl and usage.txt (excluded by main ignore rules)
-	if err := a.Watcher.WatchExtra(a.Paths.HookDir); err != nil {
-		fmt.Printf("[warning] hook watcher unavailable: %v\n", err)
 	}
 	// Seed context snapshot from existing file (don't wait for next hook write)
 	if _, err := os.Stat(a.Paths.ContextJSONL); err == nil {
@@ -669,28 +744,18 @@ func (a *App) WarmCaches(logFn func(string)) WarmResult {
 		return r
 	}
 
-	// 3. Warm file cache (always) and recon cache (only if recon is available).
+	// 3. Warm file cache first, then dim scan.
+	// Sequential: dim scan reads from the warm file cache instead of re-reading
+	// every file from disk (avoids duplicating 24K+ file reads on large repos).
 	logFn(fmt.Sprintf("warming file cache (%d files)...", r.FileCount))
-	var wg sync.WaitGroup
-
-	wg.Add(1)
 	fileCacheStart := time.Now()
-	go func() {
-		defer wg.Done()
-		a.Engine.WarmCache()
-	}()
+	a.Engine.WarmCache()
+	r.CacheTime = time.Since(fileCacheStart).Seconds()
 
 	reconStart := time.Now()
 	if a.dimEngine != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			r.ReconCached, r.ReconScanned, r.FirstRun = a.warmDimCache(logFn)
-		}()
+		r.ReconCached, r.ReconScanned, r.FirstRun = a.warmDimCache(logFn)
 	}
-
-	wg.Wait()
-	r.CacheTime = time.Since(fileCacheStart).Seconds()
 	r.ReconTime = time.Since(reconStart).Seconds()
 	a.loadInvestigated()
 
@@ -718,7 +783,9 @@ func (a *App) markIndexDirty() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if a.indexDirty {
-			_ = a.Store.SaveIndex(a.ProjectID, a.Index)
+			if err := a.Store.SaveIndex(a.ProjectID, a.Index); err != nil {
+				a.debugf("SaveIndex error: %v", err)
+			}
 			a.indexDirty = false
 		}
 	})
@@ -732,7 +799,9 @@ func (a *App) flushIndex() {
 		a.indexSaveTimer = nil
 	}
 	if a.indexDirty {
-		_ = a.Store.SaveIndex(a.ProjectID, a.Index)
+		if err := a.Store.SaveIndex(a.ProjectID, a.Index); err != nil {
+			a.debugf("flushIndex error: %v", err)
+		}
 		a.indexDirty = false
 	}
 }
@@ -740,11 +809,23 @@ func (a *App) flushIndex() {
 // Stop gracefully shuts down all services and persists learner state.
 func (a *App) Stop() error {
 	a.debugf("stopping daemon")
+
+	// Signal all background goroutines to exit.
+	close(a.stopCh)
+
+	// Stop external services (blocks until drained).
 	a.Reader.Stop()
 	a.Watcher.Stop()
 	a.WebServer.Stop()
 	a.Server.Stop()
-	// Persist final state before shutdown
+
+	// Drain search observers — they may still be pushing learner signals.
+	a.Engine.WaitObservers()
+
+	// Wait for all safeGo goroutines (shadow searches, WarmCaches, dim scan).
+	a.bgWg.Wait()
+
+	// Persist final state — all goroutines are stopped, no races.
 	a.mu.Lock()
 	a.flushSessionSummary()
 	a.flushIndex()
@@ -825,6 +906,10 @@ func (a *App) onSessionEvent(ev ports.SessionEvent) {
 			a.Learner.ProcessBigrams(ev.Text)
 		}
 		if ev.IsSubagent {
+			// Capture subagent API tokens before breaking
+			if ev.Usage != nil {
+				a.meter.RecordSubagentAPI(ev.Usage.InputTokens, ev.Usage.OutputTokens)
+			}
 			break // subagent responses don't accumulate into main session metrics
 		}
 		// Accumulate token usage (global + per-turn)
@@ -881,6 +966,40 @@ func (a *App) onSessionEvent(ev ports.SessionEvent) {
 			// L0.11: Mark that learning occurred (attrib pill added to Read row below)
 			a.lastReadLearned = true
 		}
+		// Subagent tool invocations: accumulate as children of parent Agent action
+		// instead of mixing into main conversation turns.
+		if ev.IsSubagent && ev.SubagentID != "" && ev.Tool != nil {
+			target := ""
+			if ev.File != nil && ev.File.Path != "" {
+				target = a.relativePath(ev.File.Path)
+			}
+			if target == "" && ev.Tool.Command != "" {
+				target = a.truncate(ev.Tool.Command, 100)
+			}
+			if target == "" && ev.Tool.Pattern != "" {
+				target = a.truncate(ev.Tool.Pattern, 100)
+			}
+			if target == "" {
+				if ev.Tool.Input != nil {
+					if desc, ok := ev.Tool.Input["description"].(string); ok {
+						target = a.truncate(desc, 100)
+					}
+				}
+			}
+			child := TurnAction{
+				Tool:    ev.Tool.Name,
+				Target:  target,
+				ToolID:  ev.Tool.ToolID,
+				Pattern: ev.Tool.Pattern,
+				Command: ev.Tool.Command,
+			}
+			if ev.File != nil {
+				child.FilePath = ev.File.Path
+			}
+			a.subagentChildren[ev.SubagentID] = append(a.subagentChildren[ev.SubagentID], child)
+			break // don't add to main turn builders
+		}
+
 		// Accumulate tool metrics
 		a.accumulateTool(ev)
 		// Buffer tool name and action for the current turn
@@ -989,11 +1108,82 @@ func (a *App) onSessionEvent(ev ports.SessionEvent) {
 				if target == "" && ev.Tool.Command != "" {
 					target = a.truncate(ev.Tool.Command, 100)
 				}
+			case "Agent":
+				// Extract subagent description + type from tool input
+				if ev.Tool.Input != nil {
+					if desc, ok := ev.Tool.Input["description"].(string); ok && desc != "" {
+						target = a.truncate(desc, 100)
+					}
+					if sat, ok := ev.Tool.Input["subagent_type"].(string); ok && sat != "" {
+						attrib = sat
+					}
+				}
+				skipActivity = true
+			case "TaskCreate":
+				if ev.Tool.Input != nil {
+					if subj, ok := ev.Tool.Input["subject"].(string); ok && subj != "" {
+						target = a.truncate(subj, 100)
+					}
+				}
+				skipActivity = true
+			case "TaskUpdate":
+				if ev.Tool.Input != nil {
+					if id, ok := ev.Tool.Input["taskId"].(string); ok {
+						target = "task #" + id
+						if s, ok := ev.Tool.Input["status"].(string); ok {
+							target += " → " + s
+						}
+					}
+				}
+				skipActivity = true
+			case "TaskGet":
+				if ev.Tool.Input != nil {
+					if id, ok := ev.Tool.Input["taskId"].(string); ok {
+						target = "task #" + id
+					}
+				}
+				skipActivity = true
+			case "WebSearch":
+				if ev.Tool.Input != nil {
+					if q, ok := ev.Tool.Input["query"].(string); ok && q != "" {
+						target = a.truncate(q, 100)
+					}
+				}
+				skipActivity = true
+			case "WebFetch":
+				if ev.Tool.Input != nil {
+					if u, ok := ev.Tool.Input["url"].(string); ok && u != "" {
+						target = a.truncate(u, 100)
+					}
+				}
+				skipActivity = true
+			case "AskUserQuestion":
+				if ev.Tool.Input != nil {
+					// Show first question text if available
+					if qs, ok := ev.Tool.Input["questions"].([]any); ok && len(qs) > 0 {
+						if qm, ok := qs[0].(map[string]any); ok {
+							if qt, ok := qm["question"].(string); ok && qt != "" {
+								target = a.truncate(qt, 100)
+							}
+						}
+					}
+				}
+				skipActivity = true
+			case "Skill":
+				if ev.Tool.Input != nil {
+					if s, ok := ev.Tool.Input["skill"].(string); ok && s != "" {
+						target = s
+					}
+				}
+				skipActivity = true
+			case "NotebookEdit":
+				if ev.File != nil && ev.File.Path != "" {
+					target = a.relativePath(ev.File.Path)
+				}
+				skipActivity = true
 			default:
-				// Agent, TaskCreate, TaskUpdate, TaskList, TaskGet,
-				// EnterPlanMode, ExitPlanMode, AskUserQuestion,
-				// WebFetch, WebSearch, NotebookEdit, Skill, etc.
-				// These have no meaningful Live metrics — shown in Debrief only.
+				// EnterPlanMode, ExitPlanMode, TaskList, etc.
+				// These have no meaningful target — shown in Debrief only.
 				skipActivity = true
 			}
 
@@ -1066,7 +1256,11 @@ func (a *App) onSessionEvent(ev ports.SessionEvent) {
 				totalResultChars += chars
 			}
 			if totalResultChars > 0 {
-				a.meter.RecordToolResult(totalResultChars)
+				if ev.IsSubagent {
+					a.meter.RecordSubagent(totalResultChars)
+				} else {
+					a.meter.RecordToolResult(totalResultChars)
+				}
 			}
 		}
 		// L9.3: Accumulate persisted tool result chars
@@ -1089,6 +1283,10 @@ func (a *App) onSessionEvent(ev ports.SessionEvent) {
 						if chars, ok := ev.ToolResultSizes[act.ToolID]; ok {
 							act.ResultChars = chars
 						}
+						// Parse Agent tool_result text for usage stats
+						if act.Tool == "Agent" {
+							a.enrichAgentAction(act, ev.ToolResultTexts)
+						}
 					}
 				}
 			}
@@ -1100,6 +1298,23 @@ func (a *App) onSessionEvent(ev ports.SessionEvent) {
 					if act.ToolID != "" {
 						if chars, ok := ev.ToolResultSizes[act.ToolID]; ok {
 							act.ResultChars = chars
+						}
+						// Parse Agent tool_result text for usage stats
+						if act.Tool == "Agent" {
+							a.enrichAgentAction(act, ev.ToolResultTexts)
+						}
+					}
+				}
+			}
+
+			// Correlate subagent tool result sizes back to accumulated children
+			if ev.IsSubagent && ev.SubagentID != "" {
+				if children, ok := a.subagentChildren[ev.SubagentID]; ok {
+					for i := range children {
+						if children[i].ToolID != "" {
+							if chars, ok := ev.ToolResultSizes[children[i].ToolID]; ok {
+								children[i].ResultChars = chars
+							}
 						}
 					}
 				}
@@ -1130,7 +1345,7 @@ func (a *App) onSessionEvent(ev ports.SessionEvent) {
 
 // writeStatus generates and writes status JSON to the project-local file.
 // Must be called with a.mu held.
-func (a *App) writeStatus(autotune *learner.AutotuneResult) {
+func (a *App) writeStatus(autotune *ports.AutotuneResult) {
 	if autotune != nil {
 		a.lastAutotune = autotune
 	}
@@ -1559,12 +1774,30 @@ func (a *App) UsageQuota() *socket.UsageQuotaResult {
 	return result
 }
 
+// GenerateHints produces zero-result hints for a search query.
+// Implements socket.AppQueries.
+func (a *App) GenerateHints(query string, opts ports.SearchOptions) []string {
+	if a.hintGen == nil {
+		return nil
+	}
+	return a.hintGen.Generate(hints.HintContext{
+		Query:   query,
+		AndMode: opts.AndMode,
+	})
+}
+
 // LearnerSnapshot returns a deep copy of the current learner state.
 // Safe for concurrent use — the returned state is independent.
 // Implements socket.AppQueries.
 func (a *App) LearnerSnapshot() *ports.LearnerState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	// Return cached snapshot if fresh (within 1 second).
+	// Multiple dashboard handlers in the same poll cycle share one copy.
+	if a.cachedSnapshot != nil && time.Since(a.cachedSnapshotTime) < 1*time.Second {
+		return a.cachedSnapshot
+	}
 
 	data, err := json.Marshal(a.Learner.State())
 	if err != nil {
@@ -1580,11 +1813,13 @@ func (a *App) LearnerSnapshot() *ports.LearnerState {
 			GapKeywords:      make(map[string]bool),
 		}
 	}
-	var copy ports.LearnerState
-	if err := json.Unmarshal(data, &copy); err != nil {
+	var snap ports.LearnerState
+	if err := json.Unmarshal(data, &snap); err != nil {
 		return &ports.LearnerState{}
 	}
-	return &copy
+	a.cachedSnapshot = &snap
+	a.cachedSnapshotTime = time.Now()
+	return &snap
 }
 
 // SessionMetricsSnapshot returns a snapshot of session token metrics.
@@ -1694,22 +1929,63 @@ func (a *App) ConversationTurns() socket.ConversationFeedResult {
 	}
 }
 
+// enrichAgentAction enriches an Agent TurnAction with usage stats and children
+// from subagent tool calls. Must be called with a.mu held.
+func (a *App) enrichAgentAction(act *TurnAction, resultTexts map[string]string) {
+	text, ok := resultTexts[act.ToolID]
+	if !ok {
+		return
+	}
+	act.SubagentTokens, act.SubagentToolUses, act.SubagentDurationMs = parseSubagentUsage(text)
+	if act.Attrib != "" && act.Attrib != "-" {
+		act.SubagentType = act.Attrib
+	}
+	// Extract subagent ID from result text and link accumulated children
+	if m := subagentIDRE.FindStringSubmatch(text); len(m) >= 2 {
+		agentID := m[1]
+		if children, ok := a.subagentChildren[agentID]; ok {
+			act.Children = children
+			delete(a.subagentChildren, agentID)
+		}
+	}
+	// Fallback: if no children found via agentID, try all accumulated children
+	// that haven't been claimed yet (for cases where the agentId format doesn't match)
+	if len(act.Children) == 0 && len(a.subagentChildren) == 1 {
+		for id, children := range a.subagentChildren {
+			act.Children = children
+			delete(a.subagentChildren, id)
+			break
+		}
+	}
+}
+
 // actionToResult converts a TurnAction to a TurnActionResult for the wire format.
 // Also looks up shadow data if available. Must be called with a.mu held.
 func (a *App) actionToResult(act TurnAction) socket.TurnActionResult {
 	r := socket.TurnActionResult{
-		Tool:        act.Tool,
-		Target:      act.Target,
-		Range:       act.Range,
-		Impact:      act.Impact,
-		Attrib:      act.Attrib,
-		Tokens:      act.Tokens,
-		Savings:     act.Savings,
-		TimeSavedMs: act.TimeSavedMs,
-		ResultChars: act.ResultChars,
-		Pattern:     act.Pattern,
-		FilePath:    act.FilePath,
-		Command:     act.Command,
+		Tool:               act.Tool,
+		Target:             act.Target,
+		Range:              act.Range,
+		Impact:             act.Impact,
+		Attrib:             act.Attrib,
+		Tokens:             act.Tokens,
+		Savings:            act.Savings,
+		TimeSavedMs:        act.TimeSavedMs,
+		ResultChars:        act.ResultChars,
+		Pattern:            act.Pattern,
+		FilePath:           act.FilePath,
+		Command:            act.Command,
+		SubagentTokens:     act.SubagentTokens,
+		SubagentToolUses:   act.SubagentToolUses,
+		SubagentDurationMs: act.SubagentDurationMs,
+		SubagentType:       act.SubagentType,
+	}
+	// Convert children recursively
+	if len(act.Children) > 0 {
+		r.Children = make([]socket.TurnActionResult, len(act.Children))
+		for i, child := range act.Children {
+			r.Children[i] = a.actionToResult(child)
+		}
 	}
 	// L9.5: Look up shadow data by ToolID
 	if act.ToolID != "" {
@@ -1878,7 +2154,8 @@ func (a *App) dispatchShadowSearch(shadow *ToolShadow) {
 		return
 	}
 	engine := a.Engine
-	go func(s *ToolShadow) {
+	s := shadow
+	safeGo(&a.bgWg, "shadow-search", nil, func() {
 		start := time.Now()
 		result := engine.Search(s.Pattern, ports.SearchOptions{})
 		var shadowChars int
@@ -1898,7 +2175,7 @@ func (a *App) dispatchShadowSearch(shadow *ToolShadow) {
 			a.counterfactTokensSaved += int64(s.CharsSaved / 4)
 		}
 		a.mu.Unlock()
-	}(shadow)
+	})
 }
 
 // builderToolResultChars sums ResultChars from all actions in a turn builder.
@@ -2375,7 +2652,9 @@ func (a *App) Reindex() (socket.ReindexResult, error) {
 
 	// Re-scan dimensional analysis in the background after full reindex
 	if a.dimEngine != nil {
-		go a.warmDimCache(func(string) {})
+		safeGo(&a.bgWg, "dim-rescan", nil, func() {
+			a.warmDimCache(func(string) {})
+		})
 	}
 
 	elapsed := time.Since(start)

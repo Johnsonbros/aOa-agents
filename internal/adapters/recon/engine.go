@@ -87,8 +87,6 @@ func isGeneratedFile(source []byte) bool {
 }
 
 func (e *Engine) AnalyzeFile(filePath string, source []byte, isTest, isMain bool) *analyzer.FileAnalysis {
-	start := time.Now()
-
 	if len(source) == 0 {
 		return nil
 	}
@@ -241,7 +239,7 @@ func (e *Engine) AnalyzeFile(filePath string, source []byte, isTest, isMain bool
 		Bitmask:  fileMask,
 		Methods:  methods,
 		Findings: allFindings,
-		ScanTime: time.Since(start).Microseconds(),
+		ScanTime: time.Now().UnixMicro(),
 	}
 }
 

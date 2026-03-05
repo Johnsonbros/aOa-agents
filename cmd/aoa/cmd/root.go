@@ -31,17 +31,24 @@ func Execute() error {
 
 func init() {
 	rootCmd.Version = version.String()
+
+	// Search & query — always available
 	rootCmd.AddCommand(grepCmd)
 	rootCmd.AddCommand(egrepCmd)
-	rootCmd.AddCommand(healthCmd)
-	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(findCmd)
 	rootCmd.AddCommand(locateCmd)
 	rootCmd.AddCommand(treeCmd)
-	rootCmd.AddCommand(configCmd)
-	rootCmd.AddCommand(resetCmd)
-	rootCmd.AddCommand(removeCmd)
-	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(peekCmd)
+	rootCmd.AddCommand(healthCmd)
 	rootCmd.AddCommand(openCmd)
-	rootCmd.AddCommand(grammarCmd)
+
+	// Admin — hidden in shim mode to prevent accidental state changes
+	if !isShimMode() {
+		rootCmd.AddCommand(initCmd)
+		rootCmd.AddCommand(daemonCmd)
+		rootCmd.AddCommand(resetCmd)
+		rootCmd.AddCommand(removeCmd)
+		rootCmd.AddCommand(configCmd)
+		rootCmd.AddCommand(grammarCmd)
+	}
 }

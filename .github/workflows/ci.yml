@@ -53,8 +53,9 @@ jobs:
           #   G204: subprocess with variable (daemon re-exec, open browser, grammar build)
           #   G301/G302/G306: .aoa/ permissions (0755 dirs, 0644 files — same as .git/)
           #   G304: file read with variable (reading project files is our core purpose)
+          #   G404: math/rand for non-security hint picker (cosmetic randomization)
           #   G702/G703: taint-based variants of G204/G304
-          gosec -tags lean -exclude=G103,G104,G115,G204,G301,G302,G304,G306,G702,G703 ./...
+          gosec -tags lean -exclude=G103,G104,G115,G204,G301,G302,G304,G306,G404,G702,G703 ./...
 
       - name: Network audit — verify no outbound connections
         run: |

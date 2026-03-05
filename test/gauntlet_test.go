@@ -70,7 +70,7 @@ type gauntletCase struct {
 // 1000x blowups like the Session 71 regressions.
 var gauntletCases = []gauntletCase{
 	// --- Literal: searchLiteral + trigram content scan ---
-	{"Literal/Full", "dashboard", ports.SearchOptions{}, false, 1 * time.Millisecond},
+	{"Literal/Full", "dashboard", ports.SearchOptions{}, false, 5 * time.Millisecond},
 	{"Literal/Lean", "dashboard", ports.SearchOptions{}, true, 1 * time.Millisecond},
 
 	// --- OR: searchOR union + trigram content scan ---

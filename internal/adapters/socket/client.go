@@ -174,6 +174,27 @@ func (c *Client) Reindex() (*ReindexResult, error) {
 	return &result, nil
 }
 
+// Peek sends a peek request to resolve codes to method source.
+func (c *Client) Peek(codes []string) (*PeekResult, error) {
+	resp, err := c.call(Request{
+		ID:     "1",
+		Method: MethodPeek,
+		Params: PeekParams{Codes: codes},
+	})
+	if err != nil {
+		return nil, err
+	}
+	resultJSON, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	var result PeekResult
+	if err := json.Unmarshal(resultJSON, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal result: %w", err)
+	}
+	return &result, nil
+}
+
 // Wipe sends a wipe request to clear all project data.
 func (c *Client) Wipe() error {
 	_, err := c.call(Request{
@@ -183,8 +204,21 @@ func (c *Client) Wipe() error {
 	return err
 }
 
-// Ping checks if the daemon is reachable.
+// Ping checks if the daemon is alive via an application-level health round-trip.
+// Returns true only if the daemon responds to a health request within 1 second.
+// Detects zombie daemons where the socket accepts connections but the accept loop is dead.
 func (c *Client) Ping() bool {
+	_, err := c.callWithTimeout(Request{
+		ID:     "ping",
+		Method: MethodHealth,
+	}, 1*time.Second)
+	return err == nil
+}
+
+// PingTCP checks if the daemon socket is connectable (TCP-level only).
+// Faster than Ping() but cannot detect zombie daemons. Used for startup
+// polling where speed matters and the daemon was just spawned.
+func (c *Client) PingTCP() bool {
 	conn, err := net.DialTimeout("unix", c.sockPath, 500*time.Millisecond)
 	if err != nil {
 		return false

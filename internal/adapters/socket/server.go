@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/corey/aoa/internal/domain/index"
+	"github.com/corey/aoa/internal/peek"
 	"github.com/corey/aoa/internal/ports"
 )
 
@@ -40,16 +40,19 @@ type AppQueries interface {
 	SetFileInvestigated(relPath string, investigated bool)
 	ClearInvestigated()
 	UsageQuota() *UsageQuotaResult
+	DimScanProgress() DimScanProgress
+	GenerateHints(query string, opts ports.SearchOptions) []string
 }
 
 // Server is the daemon that listens on a Unix socket and serves search requests.
 type Server struct {
-	engine   *index.SearchEngine
+	searcher ports.Searcher
 	idx      *ports.Index
 	queries  AppQueries
 	listener net.Listener
 	sockPath string
 	started  time.Time
+	logFn    func(string, ...interface{}) // optional error logger
 
 	done         chan struct{}
 	shutdownCh   chan struct{} // closed when a remote shutdown request is received
@@ -58,16 +61,28 @@ type Server struct {
 	wg           sync.WaitGroup
 }
 
-// NewServer creates a daemon server backed by the given search engine.
+// NewServer creates a daemon server backed by the given searcher.
 // The queries parameter may be nil if learner/wipe features are not needed.
-func NewServer(engine *index.SearchEngine, idx *ports.Index, sockPath string, queries AppQueries) *Server {
+func NewServer(searcher ports.Searcher, idx *ports.Index, sockPath string, queries AppQueries) *Server {
 	return &Server{
-		engine:     engine,
+		searcher:   searcher,
 		idx:        idx,
 		queries:    queries,
 		sockPath:   sockPath,
 		done:       make(chan struct{}),
 		shutdownCh: make(chan struct{}),
+	}
+}
+
+// SetLogFn sets a logger for server errors (writeResponse failures, connection errors).
+// Lazy formatting — no allocations on success paths.
+func (s *Server) SetLogFn(fn func(string, ...interface{})) {
+	s.logFn = fn
+}
+
+func (s *Server) logErr(format string, args ...interface{}) {
+	if s.logFn != nil {
+		s.logFn(format, args...)
 	}
 }
 
@@ -146,6 +161,10 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer s.wg.Done()
 	defer conn.Close()
 
+	// Prevent goroutine leak from clients that connect but never send.
+	// 10s is 100x the normal case (<100ms round-trip).
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB max message
 
@@ -155,6 +174,9 @@ func (s *Server) handleConn(conn net.Conn) {
 			continue
 		}
 
+		// Refresh deadline after each successful read.
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
 		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
 			s.writeResponse(conn, Response{Error: "invalid request JSON"})
@@ -162,12 +184,21 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 
 		resp := s.handleRequest(req)
+
+		// Close shutdown channel before writing the response so that
+		// ShutdownCh() is readable by the time the client returns.
+		if req.Method == MethodShutdown {
+			s.shutdownOnce.Do(func() { close(s.shutdownCh) })
+		}
+
 		s.writeResponse(conn, resp)
 
 		if req.Method == MethodShutdown {
-			s.shutdownOnce.Do(func() { close(s.shutdownCh) })
 			return
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		s.logErr("connection read: %v", err)
 	}
 }
 
@@ -191,6 +222,8 @@ func (s *Server) handleRequest(req Request) Response {
 		return s.handleWipe(req)
 	case MethodReindex:
 		return s.handleReindex(req)
+	case MethodPeek:
+		return s.handlePeek(req)
 	default:
 		return Response{ID: req.ID, Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
@@ -208,7 +241,7 @@ func (s *Server) handleSearch(req Request) Response {
 	}
 
 	start := time.Now()
-	result := s.engine.Search(params.Query, params.Options)
+	result := s.searcher.Search(params.Query, params.Options)
 	elapsed := time.Since(start)
 
 	hits := make([]SearchHit, len(result.Hits))
@@ -223,18 +256,20 @@ func (s *Server) handleSearch(req Request) Response {
 			Kind:         h.Kind,
 			Content:      h.Content,
 			ContextLines: h.ContextLines,
+			PeekCode:     h.PeekCode,
 		}
 	}
 
-	return Response{
-		ID: req.ID,
-		Result: SearchResult{
-			Hits:     hits,
-			Count:    result.Count,
-			ExitCode: result.ExitCode,
-			Elapsed:  elapsed.String(),
-		},
+	sr := SearchResult{
+		Hits:     hits,
+		Count:    result.Count,
+		ExitCode: result.ExitCode,
+		Elapsed:  elapsed.String(),
 	}
+	if len(hits) == 0 && s.queries != nil {
+		sr.Hints = s.queries.GenerateHints(params.Query, params.Options)
+	}
+	return Response{ID: req.ID, Result: sr}
 }
 
 func (s *Server) handleHealth(req Request) Response {
@@ -419,6 +454,69 @@ func (s *Server) handleReindex(req Request) Response {
 	return Response{ID: req.ID, Result: result}
 }
 
+func (s *Server) handlePeek(req Request) Response {
+	paramsJSON, err := json.Marshal(req.Params)
+	if err != nil {
+		return Response{ID: req.ID, Error: "invalid peek params"}
+	}
+	var params PeekParams
+	if err := json.Unmarshal(paramsJSON, &params); err != nil {
+		return Response{ID: req.ID, Error: "invalid peek params"}
+	}
+
+	root := s.searcher.ProjectRoot()
+	symbols := make([]PeekSymbol, len(params.Codes))
+
+	for i, code := range params.Codes {
+		symbols[i].Code = code
+
+		fileID, startLine, err := peek.Decode(code)
+		if err != nil {
+			symbols[i].Error = err.Error()
+			continue
+		}
+
+		ref := ports.TokenRef{FileID: fileID, Line: startLine}
+		sym := s.idx.Metadata[ref]
+		if sym == nil {
+			symbols[i].Error = "symbol not found"
+			continue
+		}
+		file := s.idx.Files[fileID]
+		if file == nil {
+			symbols[i].Error = "file not found"
+			continue
+		}
+
+		domain, tags := s.searcher.EnrichRef(ref)
+		symbols[i].File = file.Path
+		symbols[i].Symbol = s.searcher.FormatSymbol(sym)
+		symbols[i].Range = [2]int{int(sym.StartLine), int(sym.EndLine)}
+		symbols[i].Domain = domain
+		symbols[i].Tags = tags
+
+		// Read source lines from disk
+		absPath := filepath.Join(root, file.Path)
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			symbols[i].Error = fmt.Sprintf("read file: %v", err)
+			continue
+		}
+		allLines := strings.Split(string(data), "\n")
+		start := int(sym.StartLine) - 1 // 0-indexed
+		end := int(sym.EndLine)          // exclusive
+		if start < 0 {
+			start = 0
+		}
+		if end > len(allLines) {
+			end = len(allLines)
+		}
+		symbols[i].Lines = allLines[start:end]
+	}
+
+	return Response{ID: req.ID, Result: PeekResult{Symbols: symbols}}
+}
+
 func (s *Server) handleWipe(req Request) Response {
 	if s.queries == nil {
 		return Response{ID: req.ID, Error: "wipe not available"}
@@ -433,8 +531,11 @@ func (s *Server) handleWipe(req Request) Response {
 func (s *Server) writeResponse(conn net.Conn, resp Response) {
 	data, err := json.Marshal(resp)
 	if err != nil {
+		s.logErr("marshal response: %v", err)
 		return
 	}
 	data = append(data, '\n')
-	conn.Write(data)
+	if _, err := conn.Write(data); err != nil {
+		s.logErr("write response: %v", err)
+	}
 }

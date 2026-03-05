@@ -35,7 +35,25 @@ func runInit(cmd *cobra.Command, args []string) error {
 	paths := app.NewPaths(root)
 	dbPath := paths.DB
 	projectID := filepath.Base(root)
-	shimDir := filepath.Join(root, ".aoa", "shims")
+
+	summary := initSummary{}
+
+	// Step 1-3: Global install (non-fatal — falls back to per-project behavior).
+	binPath, installed, err := selfInstall()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not self-install binary: %v\n", err)
+	} else if binPath != "" {
+		summary.binaryPath = binPath
+		summary.binaryInstalled = installed
+		summary.globalShimsOK = createGlobalShims(binPath)
+		rcFile, rcModified, rcErr := configureShellRC()
+		if rcErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not configure shell: %v\n", rcErr)
+		} else {
+			summary.rcFile = rcFile
+			summary.rcModified = rcModified
+		}
+	}
 
 	// If daemon is running, delegate reindex via socket (avoids bbolt lock contention).
 	sockPath := socket.SocketPath(root)
@@ -45,20 +63,21 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("reindex via daemon: %w", err)
 		}
-		shimsOK := createShims(root)
-		statusOK := configureStatusLine(root)
+		summary.files = result.FileCount
+		summary.symbols = result.SymbolCount
+		summary.tokens = result.TokenCount
+		summary.shimsOK = createShims(root)
+		summary.statusOK = configureStatusLine(root)
 		seedStatusFile(paths)
+		appendClaudeMDGuidance(root)
 
 		// Read dashboard URL from running daemon.
-		dashURL := ""
 		if portData, err := os.ReadFile(paths.PortFile); err == nil {
-			dashURL = "http://localhost:" + strings.TrimSpace(string(portData))
+			summary.dashURL = "http://localhost:" + strings.TrimSpace(string(portData))
 		}
+		summary.daemonOK = true
 
-		printInitSummary(
-			result.FileCount, result.SymbolCount, result.TokenCount,
-			shimsOK, statusOK, true, dashURL, shimDir,
-		)
+		printInitSummary(summary)
 		return nil
 	}
 
@@ -87,6 +106,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	fmt.Println("  Indexing project (typically under a minute)...")
 	idx, stats, err := app.BuildIndex(root, parser)
 	if err != nil {
 		store.Close()
@@ -100,68 +120,117 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	store.Close()
 
-	shimsOK := createShims(root)
-	statusOK := configureStatusLine(root)
+	summary.files = stats.FileCount
+	summary.symbols = stats.SymbolCount
+	summary.tokens = stats.TokenCount
+	summary.shimsOK = createShims(root)
+	summary.statusOK = configureStatusLine(root)
 	seedStatusFile(paths)
+	appendClaudeMDGuidance(root)
 
 	// Auto-start daemon so grep, dashboard, and tailing work immediately.
-	daemonOK := false
-	dashURL := ""
 	if !client.Ping() {
-		var err error
-		dashURL, err = spawnDaemon(root, sockPath)
+		dashURL, err := spawnDaemon(root, sockPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not auto-start daemon: %v\n", err)
 			fmt.Fprintf(os.Stderr, "  → start manually: aoa daemon start\n")
 		} else {
-			daemonOK = true
+			summary.daemonOK = true
+			summary.dashURL = dashURL
 		}
 	}
 
-	printInitSummary(
-		stats.FileCount, stats.SymbolCount, stats.TokenCount,
-		shimsOK, statusOK, daemonOK, dashURL, shimDir,
-	)
+	printInitSummary(summary)
 	return nil
 }
 
+// initSummary holds all results from init for the summary output.
+type initSummary struct {
+	files, symbols, tokens int
+
+	// Global install results
+	binaryPath      string
+	binaryInstalled bool
+	globalShimsOK   bool
+	rcFile          string
+	rcModified      bool
+
+	// Per-project results
+	shimsOK  bool
+	statusOK bool
+	daemonOK bool
+	dashURL  string
+}
+
 // printInitSummary prints the cohesive checklist output for aoa init.
-func printInitSummary(files, symbols, tokens int, shimsOK, statusOK, daemonOK bool, dashURL, shimDir string) {
+func printInitSummary(s initSummary) {
 	fmt.Println("⚡ aOa initialized")
 	fmt.Println()
 
-	// Checklist
+	// Index stats
 	fmt.Printf("  ✓ indexed %s files, %s symbols, %s tokens\n",
-		commaInt(files), commaInt(symbols), commaInt(tokens))
-	if shimsOK {
-		fmt.Println("  ✓ shims installed (grep, egrep)")
+		commaInt(s.files), commaInt(s.symbols), commaInt(s.tokens))
+
+	// Global install results
+	if s.binaryInstalled {
+		fmt.Printf("  ✓ installed to %s\n", abbreviateHome(s.binaryPath))
+	} else if s.binaryPath != "" {
+		fmt.Printf("  ✓ binary up to date (%s)\n", abbreviateHome(s.binaryPath))
 	}
-	if statusOK {
+	if s.globalShimsOK {
+		fmt.Println("  ✓ global shims installed (grep, egrep)")
+	}
+	if s.rcFile != "" {
+		if s.rcModified {
+			fmt.Printf("  ✓ shell configured (%s)\n", abbreviateHome(s.rcFile))
+		} else {
+			fmt.Printf("  ✓ shell already configured (%s)\n", abbreviateHome(s.rcFile))
+		}
+	}
+
+	// Per-project results
+	if s.statusOK {
 		fmt.Println("  ✓ status line configured")
 	}
-	if daemonOK {
-		if dashURL != "" {
-			fmt.Printf("  ✓ daemon started — %s\n", dashURL)
+	if s.daemonOK {
+		if s.dashURL != "" {
+			fmt.Printf("  ✓ daemon started — %s\n", s.dashURL)
 		} else {
 			fmt.Println("  ✓ daemon started")
 		}
 	}
 
-	// Activation block
-	fmt.Println()
-	fmt.Println("  To activate, add to ~/.bashrc or ~/.zshrc:")
-	fmt.Println()
-	fmt.Printf("    alias claude='PATH=\"%s:$PATH\" claude'\n", shimDir)
-	fmt.Printf("    alias gemini='PATH=\"%s:$PATH\" gemini'\n", shimDir)
-	fmt.Println()
-	fmt.Println("  aOa intercepts grep and egrep with semantic search.")
-	fmt.Println("  Results point to methods and functions — not just matching lines.")
-	fmt.Println("  Claude navigates directly to what matters. No file scanning.")
-	fmt.Println("  Self-learning, O(1) indexed, sub-ms — pure math, zero AI overhead.")
+	// Shell activation hint
+	if s.rcModified && s.rcFile != "" {
+		fmt.Println()
+		fmt.Printf("  Restart your shell or run: source %s\n", abbreviateHome(s.rcFile))
+	} else if s.rcFile == "" && s.binaryPath == "" {
+		// Fallback: no global install succeeded — show manual instructions
+		home, _ := os.UserHomeDir()
+		shimDir := filepath.Join(home, ".local", "share", "aoa", "shims")
+		fmt.Println()
+		fmt.Println("  To activate, add to ~/.bashrc or ~/.zshrc:")
+		fmt.Println()
+		fmt.Printf("    export PATH=\"$HOME/.local/bin:$PATH\"\n")
+		fmt.Printf("    alias claude='PATH=\"%s:$PATH\" claude'\n", shimDir)
+		fmt.Printf("    alias gemini='PATH=\"%s:$PATH\" gemini'\n", shimDir)
+	}
 
 	// Branded sign-off (yellow)
 	fmt.Println()
 	fmt.Println("  \033[93maOa learns. You build faster.\033[0m")
+}
+
+// abbreviateHome replaces the user's home directory prefix with ~.
+func abbreviateHome(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if strings.HasPrefix(path, home) {
+		return "~" + path[len(home):]
+	}
+	return path
 }
 
 // commaInt formats an integer with comma separators (e.g. 1563 -> "1,563").
@@ -195,9 +264,26 @@ func createShims(root string) bool {
 		return false
 	}
 
+	// Prefer the stable self-installed binary path (~/.local/bin/aoa) over
+	// the running binary (which may be in an ephemeral npx cache).
+	aoaBin := selfInstalledBinaryPath()
+	if aoaBin == "" {
+		var err error
+		aoaBin, err = os.Executable()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not resolve aoa binary path: %v\n", err)
+			return false
+		}
+		aoaBin, err = filepath.EvalSymlinks(aoaBin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not resolve aoa binary symlink: %v\n", err)
+			return false
+		}
+	}
+
 	shims := map[string]string{
-		"grep":  "#!/usr/bin/env bash\nexport AOA_SHIM=1\nexec aoa grep \"$@\"\n",
-		"egrep": "#!/usr/bin/env bash\nexport AOA_SHIM=1\nexec aoa egrep \"$@\"\n",
+		"grep":  fmt.Sprintf("#!/usr/bin/env bash\nexport AOA_SHIM=1\nexec %q grep \"$@\"\n", aoaBin),
+		"egrep": fmt.Sprintf("#!/usr/bin/env bash\nexport AOA_SHIM=1\nexec %q egrep \"$@\"\n", aoaBin),
 	}
 
 	ok := true
@@ -392,29 +478,30 @@ model
 // unconfigureStatusLine removes the aOa status line entry from
 // .claude/settings.local.json. If the file becomes empty, restores backup
 // or deletes it. Safe to call when .claude/ doesn't exist.
-func unconfigureStatusLine(root string) {
+// Returns true if the status line was found and removed.
+func unconfigureStatusLine(root string) bool {
 	claudeDir := filepath.Join(root, ".claude")
 	settingsPath := filepath.Join(claudeDir, "settings.local.json")
 	backupPath := settingsPath + ".bak"
 
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		return // file missing, nothing to undo
+		return false // file missing, nothing to undo
 	}
 
 	var settings map[string]interface{}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return // unparseable, don't touch it
+		return false // unparseable, don't touch it
 	}
 
 	// Only remove if we put it there.
 	sl, ok := settings["statusLine"].(map[string]interface{})
 	if !ok {
-		return
+		return false
 	}
 	cmd, ok := sl["command"].(string)
 	if !ok || !strings.Contains(cmd, "aoa-status-line.sh") {
-		return
+		return false
 	}
 
 	delete(settings, "statusLine")
@@ -422,9 +509,7 @@ func unconfigureStatusLine(root string) {
 	if len(settings) == 0 {
 		// Settings map is empty — restore backup or delete file.
 		if _, err := os.Stat(backupPath); err == nil {
-			if err := os.Rename(backupPath, settingsPath); err == nil {
-				fmt.Println("restored .claude/settings.local.json from backup")
-			}
+			os.Rename(backupPath, settingsPath)
 		} else {
 			os.Remove(settingsPath)
 			// If .claude/ is now empty, remove it too.
@@ -432,22 +517,22 @@ func unconfigureStatusLine(root string) {
 			if err == nil && len(entries) == 0 {
 				os.Remove(claudeDir)
 			}
-			fmt.Println("removed .claude/settings.local.json")
 		}
-		return
+		return true
 	}
 
 	// Other keys remain — write back without statusLine.
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return
+		return false
 	}
 	out = append(out, '\n')
-	if err := os.WriteFile(settingsPath, out, 0644); err == nil {
-		fmt.Println("removed aOa status line from .claude/settings.local.json")
+	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
+		return false
 	}
 	// Clean up backup since we've preserved their other settings.
 	os.Remove(backupPath)
+	return true
 }
 
 // seedStatusFile writes a minimal status.json so the hook doesn't show
@@ -457,6 +542,117 @@ func seedStatusFile(paths *app.Paths) {
 		return // already exists, don't overwrite
 	}
 	_ = status.WriteJSON(paths.Status, &status.StatusData{})
+}
+
+// aOaGuidanceSentinel is the marker checked before appending guidance to CLAUDE.md.
+// If this string exists in the file, guidance has already been added.
+const aOaGuidanceSentinel = "<!-- aOa-guidance -->"
+
+// aOaGuidance is the block appended to CLAUDE.md during init.
+// Compact, one-time guidance that persists in the agent's context window.
+// aOaGuidanceEnd is the closing sentinel for the guidance block.
+const aOaGuidanceEnd = "<!-- /aOa-guidance -->"
+
+const aOaGuidance = `
+<!-- aOa-guidance -->
+## aOa — Required Search Method
+
+aOa provides higher accuracy than the built-in Grep/Glob tools:
+- Searches all indexed files on every call (Grep only searches what you target)
+- Returns method-scoped results (Read returns 2000 lines you must parse)
+- Semantic ranking surfaces relevant symbols (ripgrep returns string matches)
+
+REQUIRED:
+- Use Bash ` + "`grep`" + `/` + "`egrep`" + ` for ALL code search (hits aOa semantic index)
+- Use ` + "`aoa peek <code>`" + ` for method bodies (replaces Read for function inspection)
+- Use ` + "`aoa locate`" + `/` + "`aoa find`" + ` for file discovery (replaces Glob)
+- Search by **symbol name**: ` + "`grep functionName`" + ` not ` + "`grep \"how does auth work\"`" + `
+
+DO NOT USE the Grep tool or Glob tool — they bypass the semantic index
+and require 5-10x more follow-up calls to reach the same understanding.
+
+Two search modes:
+- ` + "`grep pattern`" + ` (no file arg) → semantic index search via daemon
+- ` + "`grep pattern file_or_dir`" + ` → literal file grep (auto-recurses into directories)
+- ` + "`grep --scope pkg/controller pattern`" + ` → index search filtered to path substring
+
+Result format: ` + "`<peek> file:symbol[start-end]:line @domain #tags`" + `
+- ` + "`aoa peek <code>`" + ` → full method body (batch: ` + "`aoa peek a1 b2 c3`" + `)
+- ` + "`[start-end]`" + ` → use as Read offset/limit when ` + "`--`" + ` appears (symbol too large for peek)
+- On zero results, grep will suggest corrections automatically
+- Run ` + "`grep --claude-guidance`" + ` for search help
+<!-- /aOa-guidance -->
+`
+
+// appendClaudeMDGuidance prepends aOa guidance to the top of CLAUDE.md if not already present.
+// Idempotent: checks for sentinel before writing. Creates the file if missing.
+func appendClaudeMDGuidance(root string) {
+	claudeMD := filepath.Join(root, "CLAUDE.md")
+
+	existing, err := os.ReadFile(claudeMD)
+	if err == nil && strings.Contains(string(existing), aOaGuidanceSentinel) {
+		return // already present
+	}
+
+	// Prepend guidance to the top so the agent sees it first.
+	var content string
+	if err == nil {
+		content = aOaGuidance + "\n" + string(existing)
+	} else {
+		content = aOaGuidance
+	}
+
+	if err := os.WriteFile(claudeMD, []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write aOa guidance to CLAUDE.md: %v\n", err)
+	}
+}
+
+// removeClaudeMDGuidance removes the aOa guidance block from CLAUDE.md.
+// Only removes if the block matches exactly (sentinel-delimited).
+// Returns true if guidance was found and removed, false otherwise.
+func removeClaudeMDGuidance(root string) bool {
+	claudeMD := filepath.Join(root, "CLAUDE.md")
+
+	data, err := os.ReadFile(claudeMD)
+	if err != nil {
+		return false // no file, nothing to remove
+	}
+
+	content := string(data)
+	startIdx := strings.Index(content, aOaGuidanceSentinel)
+	if startIdx < 0 {
+		return false // sentinel not found
+	}
+
+	endIdx := strings.Index(content, aOaGuidanceEnd)
+	if endIdx < 0 {
+		return false // no closing sentinel — modified by user, leave it
+	}
+
+	// Include the closing sentinel and any trailing newline
+	endIdx += len(aOaGuidanceEnd)
+	if endIdx < len(content) && content[endIdx] == '\n' {
+		endIdx++
+	}
+
+	// Trim leading newline before opening sentinel if present
+	if startIdx > 0 && content[startIdx-1] == '\n' {
+		startIdx--
+	}
+
+	cleaned := content[:startIdx] + content[endIdx:]
+
+	// If CLAUDE.md is now empty (we created it), remove the file entirely
+	if strings.TrimSpace(cleaned) == "" {
+		os.Remove(claudeMD)
+		return true
+	}
+
+	if err := os.WriteFile(claudeMD, []byte(cleaned), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not update CLAUDE.md: %v\n", err)
+		return false
+	}
+	return true
 }
 
 func writeDefaultStatusLineConf(root string) {

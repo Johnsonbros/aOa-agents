@@ -85,9 +85,15 @@ var ignoreFiles = map[string]bool{
 type Watcher struct {
 	fw         *fsnotify.Watcher
 	done       chan struct{}
+	wg         sync.WaitGroup // tracks the event loop goroutine
 	stopped    bool
 	mu         sync.Mutex
 	allowPaths map[string]bool // paths exempt from ignore rules
+
+	// excludePrefixes holds absolute path prefixes that are silently dropped
+	// before any other filtering. Used to ignore paths that aOa itself writes
+	// (e.g. .aoa/, .claude/settings.local.json). Set via Exclude().
+	excludePrefixes []string
 }
 
 // NewWatcher creates a new file system watcher.
@@ -101,6 +107,27 @@ func NewWatcher() (*Watcher, error) {
 		done:       make(chan struct{}),
 		allowPaths: make(map[string]bool),
 	}, nil
+}
+
+// Exclude registers absolute path prefixes to silently drop from event
+// processing. Any event whose path starts with one of these prefixes is
+// discarded before debounce or callback. This is used to avoid reacting
+// to files that aOa itself writes (e.g. everything under .aoa/).
+//
+// Must be called before Watch. Not safe for concurrent use.
+func (w *Watcher) Exclude(prefixes []string) {
+	w.excludePrefixes = append(w.excludePrefixes, prefixes...)
+}
+
+// isExcluded returns true if path matches any registered exclude prefix.
+// Uses string prefix comparison for efficiency (no regex).
+func (w *Watcher) isExcluded(path string) bool {
+	for _, pfx := range w.excludePrefixes {
+		if strings.HasPrefix(path, pfx) {
+			return true
+		}
+	}
+	return false
 }
 
 // Watch starts monitoring projectPath recursively.
@@ -134,9 +161,11 @@ func (w *Watcher) Watch(projectPath string, onChange func(filePath string)) erro
 	// Debounce state: track last event time per file
 	debounce := make(map[string]time.Time)
 	var dmu sync.Mutex
-	const debounceInterval = 50 * time.Millisecond
+	const debounceInterval = 500 * time.Millisecond
 
+	w.wg.Add(1)
 	go func() {
+		defer w.wg.Done()
 		for {
 			select {
 			case event, ok := <-w.fw.Events:
@@ -144,6 +173,11 @@ func (w *Watcher) Watch(projectPath string, onChange func(filePath string)) erro
 					return
 				}
 				path := event.Name
+
+				// Drop events for excluded paths (aOa's own files)
+				if w.isExcluded(path) {
+					continue
+				}
 
 				// For Create events, add new directories to the watch list
 				if event.Has(fsnotify.Create) {
@@ -215,7 +249,9 @@ func (w *Watcher) Stop() error {
 	}
 	w.stopped = true
 	close(w.done)
-	return w.fw.Close()
+	err := w.fw.Close()
+	w.wg.Wait() // block until event loop goroutine exits
+	return err
 }
 
 // isAllowed returns true if the path is under an explicitly allowed directory.

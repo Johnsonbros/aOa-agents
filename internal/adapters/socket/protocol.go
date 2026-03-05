@@ -5,6 +5,7 @@ package socket
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/corey/aoa/internal/ports"
@@ -12,7 +13,19 @@ import (
 
 // SocketPath returns the Unix socket path for a given project root.
 // Format: /tmp/aoa-{first12hex}.sock
+// Includes UID in the hash for multi-user safety on shared systems.
 func SocketPath(projectRoot string) string {
+	abs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		abs = projectRoot
+	}
+	h := sha256.Sum256([]byte(fmt.Sprintf("%d:%s", os.Getuid(), abs)))
+	return fmt.Sprintf("/tmp/aoa-%x.sock", h[:6])
+}
+
+// LegacySocketPath returns the pre-UID socket path for migration.
+// Used by daemon stop and init to clean up sockets from older versions.
+func LegacySocketPath(projectRoot string) string {
 	abs, err := filepath.Abs(projectRoot)
 	if err != nil {
 		abs = projectRoot
@@ -32,6 +45,7 @@ const (
 	MethodStats    = "stats"
 	MethodWipe     = "wipe"
 	MethodReindex  = "reindex"
+	MethodPeek     = "peek"
 )
 
 // Request is the wire format for client-to-server messages.
@@ -60,6 +74,7 @@ type SearchResult struct {
 	Count    int         `json:"count"`
 	ExitCode int         `json:"exit_code"`
 	Elapsed  string      `json:"elapsed"`
+	Hints    []string    `json:"hints,omitempty"`
 }
 
 // SearchHit is a single hit in search results (wire format).
@@ -73,6 +88,7 @@ type SearchHit struct {
 	Kind         string         `json:"kind,omitempty"`
 	Content      string         `json:"content,omitempty"`
 	ContextLines map[int]string `json:"context_lines,omitempty"`
+	PeekCode     string         `json:"peek_code,omitempty"`
 }
 
 // HealthResult is the result of a health request.
@@ -208,6 +224,13 @@ type TurnActionResult struct {
 	Command     string `json:"command,omitempty"`    // L9.2: shell command (Bash)
 	ShadowChars int    `json:"shadow_chars,omitempty"` // L9.5: aOa shadow search chars
 	ShadowSaved int    `json:"shadow_saved,omitempty"` // L9.5: chars saved vs native
+
+	// Subagent telemetry (Agent tool only)
+	SubagentTokens     int                `json:"subagent_tokens,omitempty"`
+	SubagentToolUses   int                `json:"subagent_tool_uses,omitempty"`
+	SubagentDurationMs int64              `json:"subagent_duration_ms,omitempty"`
+	SubagentType       string             `json:"subagent_type,omitempty"`
+	Children           []TurnActionResult `json:"children,omitempty"`
 }
 
 // ActivityEntryResult describes a single action in the activity feed.
@@ -379,4 +402,37 @@ type DimensionalFindingResult struct {
 	Line     int    `json:"line"`
 	Symbol   string `json:"symbol"`
 	Severity int    `json:"severity"`
+}
+
+// DimScanProgress holds progress state for an in-flight dimensional scan.
+type DimScanProgress struct {
+	Running bool    `json:"running"`
+	Total   int     `json:"total"`
+	Done    int     `json:"done"`
+	Cached  int     `json:"cached"`
+	Pct     float64 `json:"pct"`
+	Elapsed float64 `json:"elapsed"`
+	ETA     float64 `json:"eta"`
+}
+
+// PeekParams is the params for a peek request.
+type PeekParams struct {
+	Codes []string `json:"codes"`
+}
+
+// PeekResult is the result of a peek request.
+type PeekResult struct {
+	Symbols []PeekSymbol `json:"symbols"`
+}
+
+// PeekSymbol is a single resolved peek code with source lines.
+type PeekSymbol struct {
+	Code   string   `json:"code"`
+	File   string   `json:"file"`
+	Symbol string   `json:"symbol"`
+	Range  [2]int   `json:"range"`
+	Domain string   `json:"domain,omitempty"`
+	Tags   []string `json:"tags,omitempty"`
+	Lines  []string `json:"lines"`
+	Error  string   `json:"error,omitempty"`
 }

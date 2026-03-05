@@ -1154,45 +1154,39 @@ function renderDebrief() {
 
     for (var a = 0; a < actions.length; a++) {
       var act = actions[a];
-      var targetStr = act.target || '';
-      if (act.range) targetStr += act.range;
-      // L9.2: Build detail subtitle from pattern/command/file_path
-      var detailStr = '';
-      if (act.pattern) detailStr = act.pattern;
-      else if (act.command) detailStr = act.command;
-      else if (act.file_path && !targetStr) detailStr = act.file_path;
-      // Savings cell: compact 4-char max (e.g. ↓88%)
-      var saveVal = '';
-      if (act.savings > 0) {
-        saveVal = '<span class="text-green">\u2193' + act.savings + '%</span>';
-      }
-      // L9.8: Shadow savings cell
-      if (act.shadow_saved > 0 && (act.shadow_chars + act.shadow_saved) > 0) {
-        var pct = Math.round((1 - act.shadow_chars / (act.shadow_chars + act.shadow_saved)) * 100);
-        if (isFinite(pct)) {
-          saveVal += (saveVal ? ' ' : '') + '<span class="text-cyan" title="Shadow: ' + fmtK(act.shadow_chars + act.shadow_saved) + ' \u2192 ' + fmtK(act.shadow_chars) + '">\u2193' + pct + '%</span>';
+      ahtml += renderActionRow(act, false);
+      // Render subagent children if present
+      if (act.tool === 'Agent' && act.children && act.children.length > 0) {
+        var collapsed = act.children.length > 6;
+        var childId = 'agent-children-' + e2 + '-' + a;
+        if (collapsed) {
+          ahtml += '<div class="agent-children-toggle" onclick="toggleAgentChildren(\'' + childId + '\', this)" style="cursor:pointer;padding-left:2.8em;color:var(--cyan);font-size:0.85em">\u25B6 ' + act.children.length + ' tool calls...</div>';
+          ahtml += '<div id="' + childId + '" class="agent-children" style="display:none">';
+        }
+        for (var c = 0; c < act.children.length; c++) {
+          ahtml += renderActionRow(act.children[c], true);
+        }
+        if (collapsed) {
+          ahtml += '</div>';
         }
       }
-      // Tokens cell: compact 4-char max (e.g. 1.2k, 11k, 340)
-      // Fallback: estimate tokens from result_chars for tools that don't set tokens at invocation (e.g. Task)
-      var tokVal = '';
-      var displayTokens = act.tokens > 0 ? act.tokens : (act.result_chars > 0 ? Math.round(act.result_chars / 4) : 0);
-      if (displayTokens > 0) {
-        var tokCls = act.attrib === 'aOa guided' ? 'text-green' : (act.attrib === 'unguided' ? 'text-red' : 'text-dim');
-        tokVal = '<span class="' + tokCls + '">' + fmtK(displayTokens) + '</span>';
+      // Agent summary footer — always show when we have usage data
+      if (act.tool === 'Agent' && (act.subagent_tokens > 0 || act.subagent_tool_uses > 0 || act.subagent_duration_ms > 0)) {
+        var durStr = '';
+        if (act.subagent_duration_ms > 0) {
+          durStr = ' \u00B7 ' + (act.subagent_duration_ms / 1000).toFixed(1) + 's';
+        }
+        var childCount = act.children ? act.children.length : 0;
+        var toolCount = act.subagent_tool_uses > 0 ? act.subagent_tool_uses : childCount;
+        var tokCount = act.subagent_tokens > 0 ? fmtK(act.subagent_tokens) + ' tok' : '';
+        var parts = [];
+        if (toolCount > 0) parts.push(toolCount + ' tools');
+        if (tokCount) parts.push(tokCount);
+        if (durStr) parts.push(durStr.substring(3)); // trim leading ' · '
+        ahtml += '<div class="agent-summary" style="padding-left:1.6em;font-size:0.8em;color:var(--text-dim)">' +
+          '\u2514 ' + parts.join(' \u00B7 ') +
+          '</div>';
       }
-      var pathStyle = act.attrib === 'unguided' ? ' style="color:var(--red)"' : '';
-      // L9.2: Tooltip includes detail (pattern/command) when available
-      var fullTooltip = targetStr;
-      if (detailStr && detailStr !== targetStr) fullTooltip += '\n' + detailStr;
-      ahtml += '<div class="conv-action-item">' +
-        '<span class="act-left">' +
-          '<span class="conv-tool-chip ' + getToolChipClass(act.tool) + '">' + escapeHtml(act.tool) + '</span>' +
-          '<span class="conv-action-path"' + pathStyle + ' title="' + escapeHtml(fullTooltip) + '">' + escapeHtml(truncPath(targetStr, 80)) + '</span>' +
-        '</span>' +
-        '<span class="act-cell">' + saveVal + '</span>' +
-        '<span class="act-cell">' + tokVal + '</span>' +
-        '</div>';
     }
     ahtml += '</div>';
   }
@@ -1202,6 +1196,71 @@ function renderDebrief() {
   // Auto-scroll actions if user was near bottom
   if (actWasNear && actContainer) {
     actContainer.scrollTop = actContainer.scrollHeight;
+  }
+}
+
+function renderActionRow(act, isChild) {
+  var targetStr = act.target || '';
+  if (act.range) targetStr += act.range;
+  var detailStr = '';
+  if (act.pattern) detailStr = act.pattern;
+  else if (act.command) detailStr = act.command;
+  else if (act.file_path && !targetStr) detailStr = act.file_path;
+  // Savings cell
+  var saveVal = '';
+  if (act.savings > 0) {
+    saveVal = '<span class="text-green">\u2193' + act.savings + '%</span>';
+  }
+  if (act.shadow_saved > 0 && (act.shadow_chars + act.shadow_saved) > 0) {
+    var pct = Math.round((1 - act.shadow_chars / (act.shadow_chars + act.shadow_saved)) * 100);
+    if (isFinite(pct)) {
+      saveVal += (saveVal ? ' ' : '') + '<span class="text-cyan" title="Shadow: ' + fmtK(act.shadow_chars + act.shadow_saved) + ' \u2192 ' + fmtK(act.shadow_chars) + '">\u2193' + pct + '%</span>';
+    }
+  }
+  // Tokens cell — Agent rows show subagent_tokens; children/others estimate from result_chars
+  var tokVal = '';
+  var displayTokens;
+  if (act.tool === 'Agent' && act.subagent_tokens > 0) {
+    displayTokens = act.subagent_tokens;
+  } else {
+    displayTokens = act.tokens > 0 ? act.tokens : (act.result_chars > 0 ? Math.round(act.result_chars / 4) : 0);
+  }
+  if (displayTokens > 0) {
+    var tokCls = act.attrib === 'aOa guided' ? 'text-green' : (act.attrib === 'unguided' ? 'text-red' : 'text-dim');
+    tokVal = '<span class="' + tokCls + '">' + fmtK(displayTokens) + '</span>';
+  }
+  var pathStyle = act.attrib === 'unguided' ? ' style="color:var(--red)"' : '';
+  var fullTooltip = targetStr;
+  if (detailStr && detailStr !== targetStr) fullTooltip += '\n' + detailStr;
+  // Subagent type chip for Agent rows
+  var typeChip = '';
+  if (act.tool === 'Agent' && act.subagent_type) {
+    typeChip = '<span class="conv-tool-chip chip-agent-type" style="font-size:0.75em;margin-left:0.3em;opacity:0.7">' + escapeHtml(act.subagent_type) + '</span>';
+  }
+  // Child indent styling
+  var childStyle = isChild ? ' style="padding-left:2.8em;border-left:2px solid var(--border);margin-left:0.6em"' : '';
+  var connector = isChild ? '<span style="color:var(--text-dim);margin-right:0.3em">\u2502</span>' : '';
+  return '<div class="conv-action-item"' + childStyle + '>' +
+    '<span class="act-left">' +
+      connector +
+      '<span class="conv-tool-chip ' + getToolChipClass(act.tool) + '">' + escapeHtml(act.tool) + '</span>' +
+      typeChip +
+      '<span class="conv-action-path"' + pathStyle + ' title="' + escapeHtml(fullTooltip) + '">' + escapeHtml(truncPath(targetStr, 80)) + '</span>' +
+    '</span>' +
+    '<span class="act-cell">' + saveVal + '</span>' +
+    '<span class="act-cell">' + tokVal + '</span>' +
+    '</div>';
+}
+
+function toggleAgentChildren(id, el) {
+  var div = document.getElementById(id);
+  if (!div) return;
+  if (div.style.display === 'none') {
+    div.style.display = '';
+    el.innerHTML = el.innerHTML.replace('\u25B6', '\u25BC');
+  } else {
+    div.style.display = 'none';
+    el.innerHTML = el.innerHTML.replace('\u25BC', '\u25B6');
   }
 }
 
@@ -1215,6 +1274,7 @@ function getToolChipClass(tool) {
   if (t.indexOf('grep') !== -1) return 'chip-grep';
   if (t.indexOf('glob') !== -1) return 'chip-glob';
   if (t.indexOf('search') !== -1) return 'chip-search';
+  if (t === 'agent') return 'chip-agent';
   return 'chip-other';
 }
 
@@ -2188,9 +2248,201 @@ function renderReconWaitingPrompt() {
     '</div>';
 }
 
+// ═══════════════════════════════════════════════════════
+// RECON FIRST-RUN — completely separate rendering mode.
+// Takes over sidebar + tree card during initial scan.
+// ═══════════════════════════════════════════════════════
+
+var FR_SLIDES = [
+  {
+    tier: null, label: 'DIMENSIONAL ANALYSIS', color: '--cyan',
+    headline: 'Static analysis platforms charge tens of thousands a month. This is an 8MB binary.',
+    body: 'No scan limits. No subscriptions. No per-seat licensing. <strong>500+ language grammars. 180+ rules. Five dimensions. Every file, every method, under 1ms each.</strong> Tree-sitter AST parsing, a proprietary 1-bit micro-embeddings model, Aho-Corasick text matching, and abstract roll-up scoring \u2014 all at O(1) bit speed. The entire model is 48 bytes. No neural networks. No API calls. Just bit math.',
+    dims: [{ label: 'Tree-Sitter AST', c: '--cyan' }, { label: 'Micro-Embeddings', c: '--cyan' }, { label: 'Aho-Corasick', c: '--cyan' }, { label: '180+ Rules', c: '--cyan' }, { label: '500+ Languages', c: '--cyan' }],
+  },
+  {
+    tier: 'security', label: 'SECURITY', color: '--tier-sec',
+    headline: 'The breach that costs you $4M was a hardcoded secret on line 247.',
+    body: 'Right now, someone on your team has an API key committed in a string literal. A SQL query is being built with concatenation instead of parameters. A path from user input goes straight to the filesystem. <strong>You just don\u2019t know where yet.</strong> In a few minutes, you will. Every injection vector, every leaked credential, every weak cipher \u2014 pinpointed to the exact function and line. Not a single pattern match \u2014 dozens of questions converging across every line, looking for a digital signature.',
+    dims: [{ label: 'Injection', c: '--tier-sec' }, { label: 'Secrets', c: '--tier-sec' }, { label: 'Auth', c: '--tier-sec' }, { label: 'Cryptography', c: '--tier-sec' }, { label: 'Exposure', c: '--tier-sec' }],
+  },
+  {
+    tier: 'performance', label: 'PERFORMANCE', color: '--tier-perf',
+    headline: 'Your next outage is a database call inside a loop that nobody noticed.',
+    body: 'It works fine with 100 users. At 10,000, that N+1 query turns a 50ms endpoint into a 12-second timeout. The mutex held across a network call cascades through every service. The file handle that never closes leaks until the process crashes at 3 AM. <strong>These problems are invisible in development and catastrophic in production.</strong> When this scan finishes, you\u2019ll know exactly which functions will be the ones paging you at midnight.',
+    dims: [{ label: 'Query Patterns', c: '--tier-perf' }, { label: 'Memory', c: '--tier-perf' }, { label: 'Concurrency', c: '--tier-perf' }, { label: 'Resource Leaks', c: '--tier-perf' }],
+  },
+  {
+    tier: 'quality', label: 'QUALITY', color: '--tier-qual',
+    headline: 'Every team has that one function nobody wants to touch. Now you\u2019ll know why.',
+    body: 'There\u2019s a function in your codebase with 6 levels of nesting, 3 ignored errors, and 140 lines that nobody fully understands. Every change to it is a gamble. <strong>Right now it\u2019s just a feeling \u2014 "that file is scary." After this scan, it\u2019s data.</strong> You\u2019ll see exactly where complexity is concentrating, which error paths are silently swallowed, which code is dead weight. The refactoring conversation stops being opinion and starts being evidence.',
+    dims: [{ label: 'Complexity', c: '--tier-qual' }, { label: 'Error Handling', c: '--tier-qual' }, { label: 'Dead Code', c: '--tier-qual' }, { label: 'Conventions', c: '--tier-qual' }],
+  },
+  {
+    tier: 'architecture', label: 'ARCHITECTURE', color: '--tier-arch',
+    headline: 'The reason your "simple change" takes three days is architectural decay.',
+    body: 'A package that should take an afternoon to refactor touches 15 imports and has a circular dependency you didn\u2019t know about. A global variable makes the whole module untestable. An adapter reaches directly into domain internals. <strong>This is the tax you pay on every sprint and never see on a ticket.</strong> This scan maps the structural integrity of your entire architecture \u2014 clean boundaries, hidden coupling, the exact places where a small investment now prevents compounding cost later.',
+    dims: [{ label: 'Import Health', c: '--tier-arch' }, { label: 'API Surface', c: '--tier-arch' }, { label: 'Anti-patterns', c: '--tier-arch' }, { label: 'Coupling', c: '--tier-arch' }],
+  },
+  {
+    tier: 'observability', label: 'OBSERVABILITY', color: '--tier-obs',
+    headline: 'Your last incident took 4 hours because 3 error paths were silently swallowed.',
+    body: 'A timeout was caught with an empty block. A switch default did nothing. An error was logged at debug level in a function that runs once a day. When the failure surfaced, there was nothing in the logs, nothing in the metrics. <strong>So you spent hours reading code instead of reading telemetry.</strong> This scan finds every silent failure path, every debug artifact that made it to production, every place your code chooses silence over signal.',
+    dims: [{ label: 'Silent Failures', c: '--tier-obs' }, { label: 'Debug Artifacts', c: '--tier-obs' }, { label: 'Logging', c: '--tier-obs' }, { label: 'Resilience', c: '--tier-obs' }],
+  },
+  {
+    tier: null, label: 'THIS IS V1', color: '--green',
+    headline: 'The code flow graph \u2014 a subway map of how calls propagate through your codebase \u2014 is next.',
+    body: 'Is it perfect? No \u2014 some detections may be inaccurate. But it\u2019s fast, it\u2019s comprehensive, and if something looks wrong you flag it for follow-up and keep moving. Find a pattern problem, send it straight to Claude or any CLI tool. <strong>That\u2019s the workflow.</strong> And it\u2019s all configured by YAML \u2014 create your own rules, your own dimensions, enhance it however you need. 180+ rules. Five dimensions. Every file, every language, under 1ms. <em>This is the way.</em>',
+    dims: [{ label: 'YAML Rules', c: '--green' }, { label: 'Custom Dimensions', c: '--green' }, { label: 'Code Flow Graph', c: '--green' }],
+  },
+];
+
+var frSlideIdx = 0;
+var frSlideTimer = null;
+
+function renderReconFirstRun(sp) {
+  var wrap = document.getElementById('reconTreeWrap');
+  var sb = document.getElementById('reconSidebar');
+  if (!wrap || !sb) return;
+
+  // -- Progress values --
+  var pctNum = sp.total > 0 ? (sp.done / sp.total * 100) : 0;
+  var pctStr = Math.floor(pctNum) + '%';
+  var doneStr = sp.done.toLocaleString();
+  var totalStr = sp.total.toLocaleString();
+  var etaStr = '';
+  if (sp.eta > 0) {
+    if (sp.eta < 60) etaStr = '~' + Math.ceil(sp.eta) + 's remaining';
+    else etaStr = '~' + Math.ceil(sp.eta / 60) + ' min remaining';
+  } else {
+    etaStr = 'estimating\u2026';
+  }
+  var elapsedStr = '';
+  if (sp.elapsed > 0) {
+    if (sp.elapsed < 60) elapsedStr = Math.floor(sp.elapsed) + 's elapsed';
+    else elapsedStr = Math.floor(sp.elapsed / 60) + 'm ' + Math.floor(sp.elapsed % 60) + 's elapsed';
+  }
+  var cachedStr = sp.cached > 0 ? sp.cached.toLocaleString() + ' cached' : '';
+
+  // -- Breadcrumb + badge --
+  var bcEl = document.getElementById('reconBreadcrumb');
+  if (bcEl) bcEl.innerHTML = 'First Run \u2014 Dimensional Analysis';
+  var badge = document.getElementById('reconTreeBadge');
+  if (badge) badge.textContent = totalStr + ' files';
+
+  // -- Current slide --
+  var slide = FR_SLIDES[frSlideIdx];
+
+  // -- Build tree-wrap content --
+  var h = '<div class="fr-container">';
+
+  // Callout band
+  h += '<div class="fr-callout">';
+  h += '<div class="fr-callout-text"><div class="fr-callout-label">Parsing</div>';
+  h += '<div class="fr-callout-stats"><span class="num">' + doneStr + '</span> / ' + totalStr + ' files</div></div>';
+  h += '<div class="fr-bar-area"><div class="fr-bar-track"><div class="fr-bar-fill" style="width:' + pctNum.toFixed(1) + '%"></div></div>';
+  h += '<div class="fr-bar-meta"><span>' + cachedStr + '</span><span>' + elapsedStr + '</span><span>' + etaStr + '</span></div></div>';
+  h += '<div class="fr-callout-pct">' + pctStr + '</div>';
+  h += '</div>';
+
+  // One-time notice
+  h += '<div class="fr-notice">';
+  h += '<div class="fr-notice-headline">This is a one-time deep analysis. After this, results load instantly.</div>';
+  h += '<div class="fr-notice-sub">Every file is parsed through tree-sitter and evaluated across 6 dimensional rule sets. Larger projects take longer \u2014 we throttle deliberately to keep your system responsive while we work.</div>';
+  h += '</div>';
+
+  // Spotlight
+  h += '<div class="fr-spotlight-area">';
+  h += '<div class="fr-spot-label" style="color:var(' + slide.color + ')">' + slide.label + '</div>';
+  h += '<div class="fr-spot-headline">' + slide.headline + '</div>';
+  h += '<div class="fr-spot-body">' + slide.body + '</div>';
+  h += '<div class="fr-spot-dims">';
+  slide.dims.forEach(function(d) {
+    h += '<span class="fr-spot-tag" style="background:color-mix(in srgb, var(' + d.c + ') 12%, transparent);color:var(' + d.c + ')">' + d.label + '</span>';
+  });
+  h += '</div>';
+  h += '<div class="fr-spot-nav">';
+  FR_SLIDES.forEach(function(s, i) {
+    h += '<span class="fr-spot-dot' + (i === frSlideIdx ? ' active' : '') + '"' +
+      (i === frSlideIdx ? ' style="background:var(' + s.color + ')"' : '') + '></span>';
+  });
+  h += '</div></div></div>';
+
+  wrap.innerHTML = h;
+
+  // -- Sidebar: muted tiers with spotlight --
+  // Remove old tier elements
+  sb.querySelectorAll('.recon-tier').forEach(function(el) { el.remove(); });
+  sb.querySelectorAll('.recon-tier-pills').forEach(function(el) { el.remove(); });
+
+  var footer = sb.querySelector('.recon-sidebar-footer');
+  if (footer) footer.innerHTML = '<span>6</span> tiers scanning\u2026';
+
+  RECON_TIERS.forEach(function(tier) {
+    if (tier.id === 'investigated') return; // skip during first run
+
+    var tierEl = document.createElement('div');
+    tierEl.className = 'recon-tier fr-tier ' + tier.id;
+    if (slide.tier === tier.id) tierEl.classList.add('fr-spotlight');
+
+    var hdr = document.createElement('div');
+    hdr.className = 'recon-tier-header';
+    hdr.innerHTML =
+      '<span class="recon-tier-toggle off"></span>' +
+      '<span class="recon-tier-label-group">' +
+        '<div class="recon-tier-label">' + escapeHtml(tier.label) + '</div>' +
+        '<div class="recon-tier-desc">' + escapeHtml(tier.desc || '') + '</div>' +
+      '</span>' +
+      '<span class="recon-tier-count">\u2014</span>';
+    tierEl.appendChild(hdr);
+
+    var pillsWrap = document.createElement('div');
+    pillsWrap.className = 'recon-tier-pills';
+    tier.dimensions.forEach(function(dim) {
+      var pill = document.createElement('span');
+      pill.className = 'recon-dim-pill active';
+      pill.textContent = dim.label;
+      pillsWrap.appendChild(pill);
+    });
+    tierEl.appendChild(pillsWrap);
+
+    sb.insertBefore(tierEl, footer);
+  });
+
+  // Start slide rotation if not already running
+  if (!frSlideTimer) {
+    frSlideTimer = setInterval(function() {
+      frSlideIdx = (frSlideIdx + 1) % FR_SLIDES.length;
+      var d = cache.recon;
+      if (d && d.scan_progress && d.scan_progress.running) {
+        renderReconFirstRun(d.scan_progress);
+      }
+    }, 10000);
+  }
+}
+
+function stopFirstRunTimer() {
+  if (frSlideTimer) {
+    clearInterval(frSlideTimer);
+    frSlideTimer = null;
+    frSlideIdx = 0;
+  }
+}
+
 function renderRecon() {
   var data = cache.recon;
   if (!data) return;
+
+  // First-run mode: scan is running and no results yet — completely separate path
+  var sp = data.scan_progress;
+  if (sp && sp.running && sp.total > 0 && (data.total_findings || 0) === 0 && (data.files_scanned || 0) === 0) {
+    renderReconFirstRun(sp);
+    return;
+  }
+
+  // Scan finished or results available — stop the slide timer if it was running
+  stopFirstRunTimer();
 
   // Show init prompt when no scan data and recon not available (fresh install or after wipe)
   if ((data.total_findings || 0) === 0 && (data.files_scanned || 0) === 0) {

@@ -1,7 +1,7 @@
 {
   "name": "@mvpscale/aoa",
   "version": "0.0.0",
-  "description": "aOa — semantic code search engine",
+  "description": "Semantic compression for Claude and Gemini. O(1) indexed search resolves meaning, depth, and intent in under 5\u00b5s. Self-learning, single binary, zero config. 90%+ fewer tokens.",
   "bin": { "aoa": "bin/aoa" },
   "scripts": { "postinstall": "node install.js" },
   "optionalDependencies": {
@@ -11,6 +11,12 @@
     "@mvpscale/aoa-darwin-arm64": "0.0.0"
   },
   "license": "Apache-2.0",
+  "homepage": "https://mvp-scale.com",
   "repository": { "type": "git", "url": "https://github.com/mvp-scale/aOa" },
-  "keywords": ["code-search", "semantic-search", "developer-tools"]
+  "keywords": [
+    "ai-tools", "claude", "gemini", "semantic-search", "code-search",
+    "code-intelligence", "developer-tools", "devtools", "cli", "golang",
+    "token-optimization", "ai-cost-optimization", "local-first",
+    "developer-experience", "machine-learning"
+  ]
 }

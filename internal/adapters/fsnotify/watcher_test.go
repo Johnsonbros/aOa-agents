@@ -184,6 +184,161 @@ func TestWatcher_ReindexLatency(t *testing.T) {
 	t.Logf("Callback latency: %v", latency)
 }
 
+func TestWatcher_ExcludeDropsMatchingPaths(t *testing.T) {
+	// L15.3: Events for excluded paths (e.g. .aoa/, .claude/settings.local.json)
+	// are silently dropped before callback. Non-excluded paths still fire.
+	dir := t.TempDir()
+
+	// Create subdirectories that simulate .aoa/ and .claude/
+	aoaDir := filepath.Join(dir, ".aoa")
+	require.NoError(t, os.MkdirAll(aoaDir, 0755))
+	claudeDir := filepath.Join(dir, ".claude")
+	require.NoError(t, os.MkdirAll(claudeDir, 0755))
+
+	w, err := NewWatcher()
+	require.NoError(t, err)
+	defer w.Stop()
+
+	// Exclude .aoa/ subtree and .claude/settings.local.json (+ .tmp variants)
+	w.Exclude([]string{
+		aoaDir + string(filepath.Separator),
+		filepath.Join(claudeDir, "settings.local.json"),
+	})
+
+	// Must manually add the directories since .aoa is in ignoreDirs
+	// and won't be walked by Watch.
+	require.NoError(t, w.fw.Add(aoaDir))
+	require.NoError(t, w.fw.Add(claudeDir))
+
+	changed := make(chan string, 10)
+	err = w.Watch(dir, func(path string) {
+		changed <- path
+	})
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Write to excluded paths — none should trigger callback
+	os.WriteFile(filepath.Join(aoaDir, "aoa.db"), []byte("x"), 0644)
+	os.WriteFile(filepath.Join(aoaDir, "status.json"), []byte("x"), 0644)
+	os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte("{}"), 0644)
+	os.WriteFile(filepath.Join(claudeDir, "settings.local.json.tmp.12345"), []byte("{}"), 0644)
+
+	_, ok := waitForCallback(changed, 500*time.Millisecond)
+	assert.False(t, ok, "should not have received callback for excluded paths")
+
+	// Write to a non-excluded .claude/ file — should trigger
+	otherFile := filepath.Join(claudeDir, "CLAUDE.md")
+	require.NoError(t, os.WriteFile(otherFile, []byte("# test"), 0644))
+
+	path, ok := waitForCallback(changed, 2*time.Second)
+	assert.True(t, ok, "expected callback for non-excluded .claude/ file")
+	assert.Equal(t, otherFile, path)
+}
+
+func TestWatcher_ExcludeIsExcluded(t *testing.T) {
+	// Unit test for isExcluded — no filesystem needed
+	w := &Watcher{}
+	w.Exclude([]string{
+		"/project/.aoa/",
+		"/project/.claude/settings.local.json",
+	})
+
+	assert.True(t, w.isExcluded("/project/.aoa/aoa.db"))
+	assert.True(t, w.isExcluded("/project/.aoa/hook/context.jsonl"))
+	assert.True(t, w.isExcluded("/project/.aoa/status.json"))
+	assert.True(t, w.isExcluded("/project/.claude/settings.local.json"))
+	assert.True(t, w.isExcluded("/project/.claude/settings.local.json.tmp.98765"))
+
+	assert.False(t, w.isExcluded("/project/.claude/CLAUDE.md"))
+	assert.False(t, w.isExcluded("/project/src/main.go"))
+	assert.False(t, w.isExcluded("/project/.aoa")) // dir itself, not under .aoa/
+}
+
+func TestWatcher_DebounceCoalescesAtomicWrite(t *testing.T) {
+	// L15.4: An atomic write (write tmp + rename to target) should produce
+	// exactly one callback, not two. The 500ms debounce window coalesces
+	// both the Create/Write on the tmp path AND the Rename that lands on
+	// the target path. Because rename delivers an event for the target file
+	// name, we verify the target fires exactly once within the window.
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(target, []byte(`{"v":1}`), 0644))
+
+	w, err := NewWatcher()
+	require.NoError(t, err)
+	defer w.Stop()
+
+	var mu sync.Mutex
+	counts := make(map[string]int)
+	err = w.Watch(dir, func(path string) {
+		mu.Lock()
+		counts[path]++
+		mu.Unlock()
+	})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Simulate atomic write: write tmp, rename to target.
+	// Both operations generate events for the target path within ~10ms.
+	tmp := target + ".tmp.99999"
+	require.NoError(t, os.WriteFile(tmp, []byte(`{"v":2}`), 0644))
+	require.NoError(t, os.Rename(tmp, target))
+
+	// Wait long enough for any duplicate to have arrived (>debounce window)
+	time.Sleep(800 * time.Millisecond)
+
+	mu.Lock()
+	targetCount := counts[target]
+	mu.Unlock()
+
+	assert.Equal(t, 1, targetCount,
+		"expected exactly 1 callback for target after atomic write, got %d", targetCount)
+}
+
+func TestWatcher_DebounceWindowValue(t *testing.T) {
+	// L15.4: The debounce window must be >= 500ms so that events 200-300ms
+	// apart (observed in production with 24k-file K8s deployments) are
+	// coalesced. We verify by writing the same file twice with a 250ms gap
+	// and asserting only one callback fires.
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "rapid.py")
+	require.NoError(t, os.WriteFile(testFile, []byte("# v0"), 0644))
+
+	w, err := NewWatcher()
+	require.NoError(t, err)
+	defer w.Stop()
+
+	var mu sync.Mutex
+	callCount := 0
+	err = w.Watch(dir, func(path string) {
+		mu.Lock()
+		callCount++
+		mu.Unlock()
+	})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// First write
+	require.NoError(t, os.WriteFile(testFile, []byte("# v1"), 0644))
+	// Wait 250ms — inside the 500ms debounce window
+	time.Sleep(250 * time.Millisecond)
+	// Second write — should be suppressed
+	require.NoError(t, os.WriteFile(testFile, []byte("# v2"), 0644))
+
+	// Wait for debounce window to fully expire
+	time.Sleep(800 * time.Millisecond)
+
+	mu.Lock()
+	count := callCount
+	mu.Unlock()
+
+	assert.Equal(t, 1, count,
+		"expected 1 callback (second write within debounce window should be suppressed), got %d", count)
+}
+
 func TestWatcher_StopCleanup(t *testing.T) {
 	// S-04, G5: After Stop(), no more callbacks fire.
 	// Resources cleaned up, no goroutine leaks.

@@ -60,7 +60,19 @@ func (a *App) warmDimCache(logFn func(string)) (int, int, bool) {
 		return 0, 0, false
 	}
 
+	// Skip if a scan is already running (e.g., Reindex during WarmCaches).
+	if !atomic.CompareAndSwapInt32(&a.dimScanRunning, 0, 1) {
+		logFn("dim scan already running, skipping")
+		return 0, 0, false
+	}
+
 	total := len(a.Index.Files)
+	atomic.StoreInt64(&a.dimScanTotal, int64(total))
+	atomic.StoreInt64(&a.dimScanDone, 0)
+	atomic.StoreInt64(&a.dimScanCached, 0)
+	// dimScanRunning already set to 1 by CAS above
+	atomic.StoreInt64(&a.dimScanStarted, time.Now().UnixNano())
+
 	results := make(map[string]*socket.DimensionalFileResult, total)
 	analyses := make(map[string]*analyzer.FileAnalysis, total)
 
@@ -89,7 +101,9 @@ func (a *App) warmDimCache(logFn func(string)) (int, int, bool) {
 	for fileID, fm := range a.Index.Files {
 		if persisted != nil {
 			if fa, ok := persisted[fm.Path]; ok {
-				if fm.LastModified <= fa.ScanTime/1e6 {
+				// ScanTime is Unix microseconds; LastModified is Unix seconds.
+				// File is cached if it hasn't been modified since the scan.
+				if fm.LastModified <= fa.ScanTime/1_000_000 {
 					results[fm.Path] = convertFileAnalysis(fa, fileID)
 					analyses[fm.Path] = fa
 					cached++
@@ -100,21 +114,20 @@ func (a *App) warmDimCache(logFn func(string)) (int, int, bool) {
 
 		source, ok := a.getFileSource(fileID, fm.Path)
 		if !ok {
+			atomic.AddInt64(&a.dimScanDone, 1) // count skipped files as done
 			continue
 		}
 		jobs = append(jobs, scanJob{fileID: fileID, path: fm.Path, source: source})
 	}
 
-	// Parallel scan with worker pool
+	atomic.StoreInt64(&a.dimScanCached, int64(cached))
+	atomic.StoreInt64(&a.dimScanDone, int64(cached))
+
+	// Parallel scan with worker pool — capped at 2 workers to avoid
+	// starving the web server and grep during background cache warming.
 	var scanned int64
 	var processed int64
-	numWorkers := runtime.NumCPU()
-	if numWorkers > 8 {
-		numWorkers = 8
-	}
-	if numWorkers < 2 {
-		numWorkers = 2
-	}
+	numWorkers := 2
 
 	type scanResult struct {
 		path   string
@@ -135,6 +148,7 @@ func (a *App) warmDimCache(logFn func(string)) (int, int, bool) {
 			for job := range jobCh {
 				fa := engine.AnalyzeFile(job.path, job.source, isTestFile(job.path), isMainFile(job.path))
 				p := atomic.AddInt64(&processed, 1)
+			atomic.AddInt64(&a.dimScanDone, 1)
 				if fa != nil {
 					atomic.AddInt64(&scanned, 1)
 					resultCh <- scanResult{
@@ -148,6 +162,8 @@ func (a *App) warmDimCache(logFn func(string)) (int, int, bool) {
 					logFn(fmt.Sprintf("dim scan: %d/%d files (%.1fs elapsed, %d cached, %d scanned)...",
 						int64(cached)+p, total, time.Since(scanStart).Seconds(), cached, atomic.LoadInt64(&scanned)))
 				}
+				// Yield CPU between files so web/grep stay responsive.
+				runtime.Gosched()
 			}
 		}()
 	}
@@ -175,6 +191,8 @@ func (a *App) warmDimCache(logFn func(string)) (int, int, bool) {
 	a.dimCache = results
 	a.dimCacheSet = true
 	a.reconMu.Unlock()
+
+	atomic.StoreInt32(&a.dimScanRunning, 0)
 
 	// Persist to bbolt so subsequent restarts can skip re-scanning.
 	// Only save analyses for files still in the index (prunes gitignored/deleted files).

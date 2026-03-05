@@ -28,7 +28,11 @@ type Tailer struct {
 	// State
 	currentFile string
 	offset      int64
-	seen        map[string]bool // UUID dedup set
+	// Two-generation UUID dedup: seen (older) + seen2 (newer, insert target).
+	// When seen2 exceeds 5K: seen = seen2, seen2 = new map.
+	// Always retains 5K-10K entries — no false negatives at generation boundary.
+	seen  map[string]bool // older generation
+	seen2 map[string]bool // newer generation (insert target)
 
 	// L9.4: Subagent file tracking
 	subagentFiles map[string]int64 // path → last byte offset
@@ -78,6 +82,7 @@ func New(cfg Config) *Tailer {
 		callback:      cfg.Callback,
 		onError:       cfg.OnError,
 		seen:          make(map[string]bool),
+		seen2:         make(map[string]bool),
 		subagentFiles: make(map[string]int64),
 		done:          make(chan struct{}),
 		started:       make(chan struct{}),
@@ -276,14 +281,15 @@ func (t *Tailer) readNewLines() {
 		}
 
 		// UUID dedup — skip already-seen events (known bug #5034)
+		// Two-generation map: check both, insert into seen2.
 		if ev.UUID != "" {
-			if t.seen[ev.UUID] {
+			if t.seen[ev.UUID] || t.seen2[ev.UUID] {
 				if err != nil {
 					break
 				}
 				continue
 			}
-			t.seen[ev.UUID] = true
+			t.seen2[ev.UUID] = true
 		}
 
 		// Skip meta messages (internal commands like /clear)
@@ -303,9 +309,10 @@ func (t *Tailer) readNewLines() {
 		}
 	}
 
-	// Bound dedup set to prevent unbounded growth
-	if len(t.seen) > 10000 {
-		t.seen = make(map[string]bool)
+	// Two-generation rotation: when seen2 exceeds 5K, promote and reset.
+	if len(t.seen2) > 5000 {
+		t.seen = t.seen2
+		t.seen2 = make(map[string]bool)
 	}
 }
 
@@ -393,18 +400,22 @@ func (t *Tailer) readSubagentLines() {
 				continue
 			}
 
-			// Tag as subagent source
+			// Tag as subagent source and extract agent ID from filename
 			ev.Source = "subagent"
+			name := entry.Name()
+			if strings.HasPrefix(name, "agent-") && strings.HasSuffix(name, ".jsonl") {
+				ev.SubagentID = strings.TrimSuffix(strings.TrimPrefix(name, "agent-"), ".jsonl")
+			}
 
-			// UUID dedup
+			// UUID dedup (two-generation)
 			if ev.UUID != "" {
-				if t.seen[ev.UUID] {
+				if t.seen[ev.UUID] || t.seen2[ev.UUID] {
 					if readErr != nil {
 						break
 					}
 					continue
 				}
-				t.seen[ev.UUID] = true
+				t.seen2[ev.UUID] = true
 			}
 
 			if ev.IsMeta {

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/corey/aoa/internal/adapters/socket"
-	"github.com/corey/aoa/internal/domain/analyzer"
+	"github.com/corey/aoa/internal/ports"
 )
 
 // Local dashboard types — field-for-field identical JSON shape to recon.Result,
@@ -53,11 +53,11 @@ type ruleMeta struct {
 
 // SetRuleIndex populates the rule metadata index from loaded rules.
 // Called once at startup after YAML rules are loaded.
-func SetRuleIndex(rules []analyzer.Rule) {
+func SetRuleIndex(rules []ports.Rule) {
 	ruleIndex = make(map[string]ruleMeta, len(rules))
 	for _, r := range rules {
 		ruleIndex[r.ID] = ruleMeta{
-			tier:      analyzer.TierName(r.Tier),
+			tier:      ports.TierName(r.Tier),
 			dimension: r.Dimension,
 			label:     r.Label,
 		}
@@ -74,12 +74,15 @@ func (s *Server) handleRecon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// No recon data available — return install prompt
+	// No recon data available — return install prompt (with scan progress if running)
 	w.Header().Set("Content-Type", "application/json")
 	reconAvailable := s.queries != nil && s.queries.ReconAvailable()
 	var invFiles []string
+	var scanProgress *socket.DimScanProgress
 	if s.queries != nil {
 		invFiles = s.queries.InvestigatedFiles()
+		sp := s.queries.DimScanProgress()
+		scanProgress = &sp
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"files_scanned":      0,
@@ -88,6 +91,7 @@ func (s *Server) handleRecon(w http.ResponseWriter, r *http.Request) {
 		"install_prompt":     "Run 'aoa init' to scan your project and enable structural analysis",
 		"tree":               map[string]interface{}{},
 		"investigated_files": invFiles,
+		"scan_progress":      scanProgress,
 	})
 }
 
@@ -172,22 +176,27 @@ func (s *Server) serveDimensionalResults(w http.ResponseWriter, dimResults map[s
 
 	reconAvailable := false
 	var invFiles []string
+	var scanProgress *socket.DimScanProgress
 	if s.queries != nil {
 		reconAvailable = s.queries.ReconAvailable()
 		invFiles = s.queries.InvestigatedFiles()
+		sp := s.queries.DimScanProgress()
+		scanProgress = &sp
 	}
 	response := struct {
 		*reconResult
-		ReconAvailable    bool     `json:"recon_available"`
-		DimensionalMode   bool     `json:"dimensional_mode"`
-		ScannedAt         int64    `json:"scanned_at"`
-		InvestigatedFiles []string `json:"investigated_files"`
+		ReconAvailable    bool                   `json:"recon_available"`
+		DimensionalMode   bool                   `json:"dimensional_mode"`
+		ScannedAt         int64                  `json:"scanned_at"`
+		InvestigatedFiles []string               `json:"investigated_files"`
+		ScanProgress      *socket.DimScanProgress `json:"scan_progress"`
 	}{
 		reconResult:       result,
 		ReconAvailable:    reconAvailable,
 		DimensionalMode:   true,
 		ScannedAt:         time.Now().Unix(),
 		InvestigatedFiles: invFiles,
+		ScanProgress:      scanProgress,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -197,7 +206,7 @@ func (s *Server) serveDimensionalResults(w http.ResponseWriter, dimResults map[s
 // handleSourceLine returns source lines from the in-memory file cache.
 // GET /api/source-line?file=relative/path.go&line=12&context=2
 func (s *Server) handleSourceLine(w http.ResponseWriter, r *http.Request) {
-	if s.idx == nil || s.engine == nil {
+	if s.idx == nil || s.lineCache == nil {
 		http.Error(w, `{"error":"index not available"}`, http.StatusServiceUnavailable)
 		return
 	}
@@ -228,13 +237,6 @@ func (s *Server) handleSourceLine(w http.ResponseWriter, r *http.Request) {
 		ctxLines = 5
 	}
 
-	// Find file ID by path
-	fc := s.engine.Cache()
-	if fc == nil {
-		http.Error(w, `{"error":"file cache not available"}`, http.StatusServiceUnavailable)
-		return
-	}
-
 	var fileID uint32
 	found := false
 	for id, fm := range s.idx.Files {
@@ -249,7 +251,7 @@ func (s *Server) handleSourceLine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lines := fc.GetLines(fileID)
+	lines := s.lineCache.GetLines(fileID)
 	if lines == nil {
 		http.Error(w, `{"error":"file not in cache"}`, http.StatusNotFound)
 		return

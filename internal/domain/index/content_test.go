@@ -731,3 +731,98 @@ func TestContentSearch_GlobFilterWithTrigram(t *testing.T) {
 	require.Equal(t, 1, len(contentHits))
 	assert.Equal(t, "auth.go", contentHits[0].File, "glob should filter to .go only")
 }
+
+func TestContentSearch_WordBoundaryWithIncludeGlob(t *testing.T) {
+	// Regression test for L14.3: --include glob + -w should be fast.
+	// With pre-filtering, only glob-matching files are searched.
+	// Uses "scheduler" as query — a standalone word that appears in comments.
+	engine, _ := setupContentTestWithCache(t, map[string]string{
+		"scheduler/gang.go":   "package scheduler\n\n// scheduler logic for gang scheduling\nfunc Run() {\n}\n",
+		"scheduler/queue.go":  "package scheduler\n\nfunc Enqueue() {\n}\n",
+		"controller/main.go":  "package controller\n\n// scheduler integration\nfunc Start() {\n}\n",
+		"unrelated/other.go":  "package unrelated\n\nfunc Unrelated() {\n}\n",
+	})
+
+	// Search with -w and --include narrowing to gang* files
+	result := engine.Search("scheduler", ports.SearchOptions{
+		WordBoundary: true,
+		IncludeGlob:  "*gang*",
+		MaxCount:     50,
+	})
+	require.NotNil(t, result)
+
+	// All hits should be from gang.go only, not from queue.go, main.go, or other.go
+	for _, h := range result.Hits {
+		assert.Contains(t, h.File, "gang", "all hits should be from gang* files, got: %s", h.File)
+	}
+	assert.GreaterOrEqual(t, len(result.Hits), 1, "should find 'scheduler' in gang.go")
+}
+
+func TestContentSearch_IncludeGlobNoMatchFastExit(t *testing.T) {
+	// When --include glob matches zero files, search should return immediately
+	// without scanning any content.
+	engine, _ := setupContentTestWithCache(t, map[string]string{
+		"auth.go":    "func authentication() {}\n",
+		"handler.go": "func handleRequest() {}\n",
+	})
+
+	result := engine.Search("authentication", ports.SearchOptions{
+		IncludeGlob: "*nonexistent*",
+		MaxCount:    50,
+	})
+	require.NotNil(t, result)
+	assert.Empty(t, result.Hits, "no files match glob, so no results expected")
+}
+
+func TestContentSearch_IncludeGlobWithBruteForce(t *testing.T) {
+	// Verify that brute-force content scan respects the allowedFiles pre-filter
+	// and only scans matching files.
+	engine, _ := setupContentTestWithCache(t, map[string]string{
+		"gang_scheduling.go": "package gang\n\nfunc PreEnqueue() {\n\t// setup\n}\n",
+		"other.go":           "package other\n\nfunc PreEnqueue() {\n\t// different\n}\n",
+		"unrelated.go":       "package unrelated\n\nfunc Something() {\n}\n",
+	})
+
+	// Search for "setup" with --include narrowing to gang* files
+	result := engine.Search("setup", ports.SearchOptions{
+		IncludeGlob: "*gang*",
+		MaxCount:    50,
+	})
+	require.NotNil(t, result)
+
+	var contentHits []Hit
+	for _, h := range result.Hits {
+		if h.Kind == "content" {
+			contentHits = append(contentHits, h)
+		}
+	}
+	require.Equal(t, 1, len(contentHits), "should find 'setup' only in gang_scheduling.go")
+	assert.Equal(t, "gang_scheduling.go", contentHits[0].File)
+}
+
+func TestContentSearch_WordBoundaryTrigramPath(t *testing.T) {
+	// Verify that -w with a long query uses trigram narrowing for content hits.
+	// "authentication" is a standalone word that appears in function bodies.
+	engine, _ := setupContentTestWithCache(t, map[string]string{
+		"a.go": "package a\n\nfunc Run() {\n\t// authentication required\n}\n",
+		"b.go": "package b\n\nfunc Run() {\n\t// authorization required\n}\n",
+		"c.go": "package c\n\nfunc Run() {\n\t// unrelated logic\n}\n",
+	})
+
+	result := engine.Search("authentication", ports.SearchOptions{
+		WordBoundary: true,
+		MaxCount:     50,
+	})
+	require.NotNil(t, result)
+
+	var contentHits []Hit
+	for _, h := range result.Hits {
+		if h.Kind == "content" {
+			contentHits = append(contentHits, h)
+		}
+	}
+	require.GreaterOrEqual(t, len(contentHits), 1, "should find 'authentication'")
+	for _, h := range contentHits {
+		assert.Equal(t, "a.go", h.File, "word boundary should only match 'authentication' in a.go")
+	}
+}

@@ -36,6 +36,8 @@ var (
 	grepFixedStrings   bool
 	grepFilesMatch     bool
 	grepColor          string
+	grepClaudeGuidance bool
+	grepScope          string
 )
 
 var grepCmd = &cobra.Command{
@@ -77,9 +79,15 @@ func init() {
 	f.BoolVarP(&grepFilesMatch, "files-with-matches", "l", false, "Print only filenames of matching files")
 	f.BoolVar(&grepNoFilename, "no-filename", false, "Suppress filename prefix")
 	f.StringVar(&grepColor, "color", "auto", "Color output: auto, always, never")
+	f.BoolVar(&grepClaudeGuidance, "claude-guidance", false, "Print detailed search guidance for AI agents")
+	f.StringVar(&grepScope, "scope", "", "Filter index results by file path substring (e.g. --scope controller/foo)")
 }
 
 func runGrep(cmd *cobra.Command, args []string) error {
+	if grepClaudeGuidance {
+		fmt.Print(claudeGuidanceText)
+		return nil
+	}
 	// 1. Parse pattern vs file args
 	pattern, fileArgs, multiPattern, err := parseGrepArgs(args, grepPatterns)
 	if err != nil {
@@ -154,6 +162,7 @@ func runGrepIndex(query string, useColor bool) error {
 		AfterContext:       grepAfterCtx,
 		BeforeContext:      grepBeforeCtx,
 		Context:            grepContext,
+		Scope:             grepScope,
 	}
 	if grepCaseInsens {
 		opts.Mode = "case_insensitive"
@@ -205,9 +214,15 @@ func executeSearch(query string, opts ports.SearchOptions, useColor bool) error 
 		return err
 	}
 
-	// Choose output format based on TTY
-	if isStdoutTTY() && useColor {
-		fmt.Print(formatSearchResult(result, opts.CountOnly, opts.Quiet, grepNoFilename, false))
+	// Choose output format:
+	// - Shim mode or feature env vars: semantic format (symbols, ranges, domains, tags, peek codes).
+	// - TTY with color: semantic compression with ANSI color codes.
+	// - Non-TTY (piped, file grep with -H, etc.): GNU grep-compatible output.
+	if isShimMode() || showPeekCodes() || showHints() {
+		noColor := !useColor || !isStdoutTTY()
+		fmt.Print(formatSearchResult(result, opts.CountOnly, opts.Quiet, grepNoFilename, noColor, query))
+	} else if isStdoutTTY() && useColor {
+		fmt.Print(formatSearchResult(result, opts.CountOnly, opts.Quiet, grepNoFilename, false, query))
 	} else {
 		fmt.Print(formatGrepCompat(result, grepLineNumber, grepNoFilename, grepFilesMatch, grepCountOnly, grepQuiet))
 	}
@@ -221,3 +236,47 @@ func executeSearch(query string, opts ports.SearchOptions, useColor bool) error 
 func isConnectError(err error) bool {
 	return strings.Contains(err.Error(), "connect:")
 }
+
+const claudeGuidanceText = `aOa Search — Quick Reference
+
+  SEARCH MODES:
+    grep symbolName              Index search (no file arg → semantic index)
+    grep pattern file_or_dir     File grep (auto-recurses into directories)
+
+  INDEX SEARCH:
+    grep symbolName          Symbol search (OR mode)
+    egrep 'funcA|funcB'      Regex alternation
+    grep -e pat1 -e pat2     Multi-pattern OR
+    grep -a 'term1,term2'    AND mode (all terms must match)
+    grep -i pattern          Case-insensitive
+    grep -w pattern          Word boundary
+    grep -m 10 pattern       Limit to N results
+    grep --scope pkg/foo pat Scope index results to path substring
+
+  DIRECTORY SEARCH:
+    grep pattern pkg/foo/    Auto-recurses — no -r needed
+    egrep 'A|B' src/         Regex in directory
+    grep -rn pattern dir/    Explicit -r also works
+
+  INSPECT:
+    aoa peek <code>          Full method body (batch: aoa peek a1 b2 c3)
+    aoa locate <name>        Find files by substring
+    aoa find <glob>          Find files by glob pattern
+
+  RESULTS:
+    <peek> file:symbol[start-end]:line @domain #tags
+    Use aoa peek <code> to get the method body.
+    When -- appears, symbol is too large — use Read at that line.
+
+  COMMON FIXES:
+    grep authenticate        NOT grep "how does auth work" (symbol names only)
+    egrep 'auth|login'       NOT grep -a 'auth,login,session' (fewer AND terms)
+    aoa peek a1              NOT Read entire file to find a function
+    aoa locate controller    NOT Glob **/*.go to discover files
+
+  ZERO RESULTS:
+    1. Broader term: grep auth (not authenticateUser)
+    2. Alternation: egrep 'auth|login|session'
+    3. Daemon health: aoa health
+    4. File search: aoa locate partialName
+`
